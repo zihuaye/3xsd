@@ -1,4 +1,4 @@
-3xsd is a native epoll server serving TCP/UDP connections, a high performance static web server, a failover dns server, a http-based distributed file server(implementing), and a load-balance cache server.
+3xsd is a native epoll server serving TCP/UDP connections, a high performance static web server, a failover dns server, a http-based distributed file server(implementing), and a load-balance proxy-cache server.
 
 OS requirement: CentOS 6.x with python 2.6/2.7, Debian 6/7.
 
