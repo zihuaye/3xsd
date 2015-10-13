@@ -1,0 +1,276 @@
+#!/usr/bin/env python
+
+import os, sys, pwd, multiprocessing, psutil
+sys.dont_write_bytecode = True		#do not write .pyc .pyo files, for dev phase
+
+import getopt, setproctitle, _3xsd, gevent
+from gevent import monkey
+from gevent.pool import Pool
+
+if __name__ == "__main__":
+
+	port = 0
+	conns = 0
+	workers = 0
+	backlog = 0
+	foreground = 0
+	homedir = os.getcwd()
+	custum_home = 0
+	native_epoll = 1
+	gevent_stream = 0
+	i_dns = 0
+	x_dfs = 0
+	z_lbs = 0
+	uname = None
+
+	cpu_count = multiprocessing.cpu_count()
+	cpu_affinity = 0
+
+	opts, args = getopt.getopt(sys.argv[1:], "vafhimngrswzp:c:b:k:d:u:")
+	
+	for o, a in opts:
+		if o == "-p":
+			port = int(a)
+		elif o == "-c":
+			conns = int(a)
+		elif o == "-b":
+			backlog = int(a)
+		elif o == "-k":
+			workers = int(a)
+		elif o == "-s":
+			workers = 0
+		elif o == "-m":
+			workers = cpu_count
+		elif o == "-n":
+			native_epoll = 1
+			gevent_stream = 0
+		elif o == "-g":
+			native_epoll = 0
+			gevent_stream = 1
+		elif o == "-i":
+			i_dns = 1
+			x_dfs = 0
+			z_lbs = 0
+		elif o == "-f":
+			i_dns = 0
+			x_dfs = 1
+			z_lbs = 0
+		elif o == "-z":
+			i_dns = 0
+			x_dfs = 0
+			z_lbs = 1
+		elif o == "-w":
+			i_dns = 0
+			x_dfs = 0
+			z_lbs = 0
+		elif o == "-r":
+			foreground = 1
+		elif o == "-u":
+			uname = a
+		elif o == "-d":
+			homedir = a
+			custum_home = 1
+			os.chdir(homedir)
+		elif o == "-a":
+			cpu_affinity = 1
+		elif o == "-v":
+			print "version:", _3xsd.__version__
+			sys.exit()
+		elif o == "-h":
+			print("Usage:")
+			print("3xsd <options>\n")
+			print("Options:")
+			print("-a : cpu affinity(default:no)")
+			print("-b <num> : backlog(default:1000)")
+			print("-c <num> : max connections(default:10000)")
+			print("-d /path/to/doc_root : document root(default:current path)")
+			print("-f : dfs mode(3fsd, a distributed web file system, implementing...)")
+			print("-g : using gevent stream server(libevent for gevent version 0.13.8 and before, libev for 1.0 and later)")
+			print("-h : help information")
+			print("-i : dns mode(3nsd, an intelligent dns server with failover support)")
+			print("-k <num> : multi-workers with num")
+			print("-m : multi-workers depending on cpu cores")
+			print("-n : using system native epoll(default)")
+			print("-p <num> : port number(default:8000)")
+			print("-r : running foreground, for debug & profile purpose")
+			print("-s : single process, no worker(default)")
+			print("-v : show version")
+			print("-w : web mode(3wsd, a simple web server, default)")
+			print("-z : accelerating mode(3zsd, a reverse proxy server with load balancing support)")
+			sys.exit()
+	
+	#fork child process 2 times, to avoid zombie process
+	if not foreground:
+		pid = os.fork()
+	if pid > 0 :
+		sys.exit(0)
+		pid = os.fork()
+	if pid > 0 :
+		sys.exit(0)
+	
+	#now, daemonized, the daemon main process running
+	
+	#do a magic, change the blocking I/O api(socket, select,..) into non-blocking(gevent)
+	#notice doing this(patch_thread) in multi-worker mode, will cause key exception error in threading module reported
+	if native_epoll == 1:
+	#turn select patch off, cause epoll will be used
+		monkey.patch_all(socket=True, dns=True, time=True, select=False, thread=False, os=True, ssl=False, httplib=False, aggressive=True)
+	else:
+	#turn thread patch off, cause it will not be used
+		monkey.patch_all(socket=True, dns=True, time=True, select=True,  thread=False, os=True, ssl=False, httplib=False, aggressive=True)
+	
+	#listening at port, default 8000
+	if port > 0:
+		_3xsd.Port = port
+	else:
+		_3xsd.Port = 8000
+	
+	#listening backlog, default 1000
+	if backlog > 0:
+		_3xsd.Backlog = backlog
+	else:
+		_3xsd.Backlog = 1000
+	
+	#limiting connections
+	if conns > 0:
+		_3xsd.Conns = Pool(conns)
+	else:
+		_3xsd.Conns = Pool(10000)
+	
+	if i_dns == 1:
+		program_name = '3nsd'
+		_3xsd.Port = 53
+	elif x_dfs == 1:
+		program_name = '3fsd'
+	elif z_lbs == 1:
+		program_name = '3zsd'
+	else:
+		program_name = '3wsd'
+	
+	_3xsd._Name = program_name
+	
+	#workers to fork, default to no workers
+	if workers > 0:
+		_3xsd.Workers = workers
+		my_title_pre = "%s %s" % (program_name, "master")
+	else:
+		_3xsd.Workers = 0
+		my_title_pre = "%s" % program_name
+	
+	_3xsd.Homedir = homedir
+	
+	#set process title to identify master, worker, etc.
+	if len(sys.argv) > 1:
+		if custum_home > 0:
+			my_title = my_title_pre + " " + " ".join(sys.argv[1:])
+		else:
+			my_title = my_title_pre + " " + " ".join(sys.argv[1:]) + " -d " + homedir
+	else:
+		my_title = my_title_pre + " -d " + homedir
+	
+	setproctitle.setproctitle(my_title)
+	
+	#init the handler and server instance
+	if i_dns == 1:
+		server_mode = 'i_dns'
+		_3xsd.Handler = _3xsd._xDNSHandler
+		_3xsd.Server  = _3xsd._Z_EpollServer(("", _3xsd.Port), _3xsd.Handler, tcp=False)
+	elif x_dfs == 1:
+		server_mode = 'x_dfs'
+		_3xsd.Handler = _3xsd._xDFSHandler
+		_3xsd.Server  = _3xsd._Z_EpollServer(("", _3xsd.Port), _3xsd.Handler, backlog=_3xsd.Backlog, spawn=_3xsd.Conns)
+	elif z_lbs == 1:
+		server_mode = 'z_lbs'
+		_3xsd.Handler = _3xsd._xZHandler
+		_3xsd.Server  = _3xsd._Z_EpollServer(("", _3xsd.Port), _3xsd.Handler, backlog=_3xsd.Backlog, spawn=_3xsd.Conns)
+	#below are web servers
+	elif native_epoll == 1:
+		#init the native epoll server, powerful
+		server_mode = 'native_epoll'
+		_3xsd.Handler = _3xsd._xHandler
+		_3xsd.Server  = _3xsd._Z_EpollServer(("", _3xsd.Port), _3xsd.Handler, backlog=_3xsd.Backlog, spawn=_3xsd.Conns)
+	else:
+		#init the gevent.StreamServer, requests goes to function: _3xsd.Handle_Gevent_Stream()
+		server_mode = 'gevent_stream'
+		_3xsd.Handler = _3xsd._xHandler
+		_3xsd.Server = _3xsd._Z_StreamServer(("", _3xsd.Port), _3xsd.Handle_Gevent_Stream, backlog=_3xsd.Backlog, spawn=_3xsd.Conns)
+	
+	_3xsd.Server.server_mode = server_mode
+	_3xsd.Server.workers = _3xsd.Workers
+	_3xsd.Server.reuse_addr = 1
+	_3xsd.Server.pre_start()
+	
+	print program_name, "serving at port:", _3xsd.Port, ", master pid:", os.getpid(), ", max conns:", _3xsd.Conns.size, ", backlog:", _3xsd.Backlog, ", workers:", _3xsd.Workers, ", server_mode:", server_mode, ", handler:", _3xsd.Handler, ", version:", _3xsd.__version__, ", socket:", type(_3xsd.Server.socket)
+	
+	if uname is not None:
+		#set specific uid and gid of process
+		os.setgid(pwd.getpwnam(uname).pw_gid)
+		os.setuid(pwd.getpwnam(uname).pw_uid)
+	
+	#chose to running in single process mode or multi-worker mode
+	if _3xsd.Workers == 0:
+		#single process, no workers, start server event loop
+		if i_dns:
+			_3xsd.Server.serve_dns()
+		elif z_lbs:
+			_3xsd.Server.serve_lbs()
+		else:
+			_3xsd.Server.serve_forever()
+	
+	elif _3xsd.Workers > 0:
+	#fork workers, use gevent.fork instead of os.fork, doing the magic of sharing listen socket, dispatching requests
+		pid = 0
+		childs = {}
+		for i in xrange(_3xsd.Workers):
+			pid = gevent.fork()
+			if pid == 0:
+				_3xsd.Server._worker_id = i + 1
+				break
+			else:
+				childs[pid] = i + 1
+				print "#", i + 1, " worker pid:", pid, " forked"
+		
+		if pid > 0:
+			_3xsd.Server.master_works()
+			while 1:
+				pid_s = os.wait()
+				print "worker pid:", pid_s[0], " exited, status:", pid_s[1]
+				worker_id = childs.pop(pid_s[0])
+				pid = gevent.fork()
+				if pid == 0:
+					_3xsd.Server._worker_id = worker_id
+					break
+				else:
+		                	childs[pid] = worker_id
+		                	print "#", worker_id, " worker pid:", pid, " forked"
+		
+			if pid > 0:
+				print "master pid:", os.getpid(), " exited"
+				sys.exit()
+	
+	#worker start here
+	
+	# I am worker
+	setproctitle.setproctitle(program_name + " worker " + str(_3xsd.Server._worker_id))
+	
+	if cpu_affinity == 1:
+		p = psutil.Process(os.getpid())
+		if hasattr(p, "set_cpu_affinity"):
+			#older version like 0.6.1
+			p.set_cpu_affinity([_3xsd.Server._worker_id % cpu_count])
+		else:
+			#newer version like 3.2.1
+			p.cpu_affinity([_3xsd.Server._worker_id % cpu_count])
+		print "set cpu_affinity of process:", p.pid, " to cpu", _3xsd.Server._worker_id % cpu_count
+
+	if native_epoll == 1:
+		if i_dns:
+			_3xsd.Server.serve_dns()
+		elif z_lbs:
+			_3xsd.Server.serve_lbs()
+		else:
+			_3xsd.Server.serve_forever()
+	else:
+		_3xsd.Server._stopped_event.clear()
+		_3xsd.Server.start_accepting()
+		_3xsd.Server._stopped_event.wait()
