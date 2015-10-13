@@ -25,3 +25,4 @@ To install a module of specific version(like gevent 0.13.8), you can:
 This will install the latest version of gevent(pypy will need it):
   pip install git+git://github.com/surfly/gevent.git#egg=gevent
 
+(a soft-link _3xsd.py -> _3xsd.pyx may be needed)
