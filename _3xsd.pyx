@@ -1,7 +1,7 @@
 # _3xsd module
 #
 # 3xsd is a native epoll server serving TCP/UDP connections, a high performance static web server, a failover dns server,
-# a http-based distributed file server(implementing), and a load-balance cache server.
+# a http-based distributed file server(implementing), and a load-balance proxy-cache server.
 #
 # The xHandler to handle web requests, and the xDNSHandler to handle DNS query.
 # The xZHandler to handle proxy(load-balance/cache)requests, and the xDFSHandler to handle DFS requests.
