@@ -364,6 +364,8 @@ class _xHandler:
 	mimetype = {'html': 'text/html', 'htm': 'text/html', 'txt': 'text/plain',
 			'css': 'text/css', 'xml': 'text/xml', 'js': 'application/x-javascript',
 			'png': 'image/png', 'jpg': 'image/jpeg', 'gif': 'image/gif', 'bin': 'application/octet-stream'}
+	web_config = None
+	web_config_parsed = False
 	
 	_r = b''  #request headers
 	
@@ -389,12 +391,29 @@ class _xHandler:
 		self.in_headers = {}
 		self.out_headers = {}
 
+		self.init_config()
 		self.init_handler(conn, client_address)
 
 		if self._gevent_stream:
 			sendfile.sendfile = gevent_sendfile
 			self.handle_request()
 			self.clean()
+
+	def init_config(self):
+		if not self.web_config_parsed:
+			try:
+                		self.web_config = ConfigParser.ConfigParser()
+                		self.web_config.read('3xsd.conf')
+                		_mime_types = self.web_config.get('3wsd', 'mimetypes')
+				for item in _mime_types.split(','):
+					if item:
+						k, v = item.split(':', 1)
+						if k and v:
+							self.mimetype[k] = v
+			except:
+				pass
+
+			web_config_parsed = True
 
 	def init_handler(self, conn, client_address, rw_mode=0):
 		self.sock = conn
