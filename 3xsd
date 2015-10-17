@@ -117,7 +117,8 @@ if __name__ == "__main__":
 		pid = os.fork()
 	if pid > 0 :
 		sys.exit(0)
-		pid = os.fork()
+	
+	pid = os.fork()
 	if pid > 0 :
 		sys.exit(0)
 	
