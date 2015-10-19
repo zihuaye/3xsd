@@ -117,7 +117,7 @@ if __name__ == "__main__":
 		pid = os.fork()
 	if pid > 0 :
 		sys.exit(0)
-	
+
 	pid = os.fork()
 	if pid > 0 :
 		sys.exit(0)
@@ -228,6 +228,8 @@ if __name__ == "__main__":
 			_3xsd.Server.serve_dns()
 		elif z_lbs:
 			_3xsd.Server.serve_lbs()
+		elif x_dfs:
+			_3xsd.Server.serve_dfs()
 		else:
 			_3xsd.Server.serve_forever()
 	
@@ -282,6 +284,8 @@ if __name__ == "__main__":
 			_3xsd.Server.serve_dns()
 		elif z_lbs:
 			_3xsd.Server.serve_lbs()
+		elif x_dfs:
+			_3xsd.Server.serve_dfs()
 		else:
 			_3xsd.Server.serve_forever()
 	else:
