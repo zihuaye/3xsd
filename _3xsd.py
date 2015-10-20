@@ -15,7 +15,7 @@
 
 __version__ = "0.0.7"
 
-import os, sys, io, time, random, multiprocessing
+import os, sys, io, time, calendar, random, multiprocessing
 import shutil, mmap, sendfile
 import _socket as socket
 import select, errno, gevent, dpkt, ConfigParser, hashlib
@@ -1134,6 +1134,7 @@ class _xZHandler(_xHandler, _xDNSHandler):
 
 	_f = None #socket fileno
 
+	z_cache_size = 1000  	#limit the xcache size, preventing too large
 	z_idle_ttl = 20  	#backend connections have a idle timeout of 30 seconds
 
 	def __init__(self, conn, client_address, server, native_epoll=True,
@@ -1559,7 +1560,39 @@ class _xZHandler(_xHandler, _xDNSHandler):
 		self.out_body_file = _resp[self.server.zcache_stat[_f][3]:]
 		self.out_body_size = len(self.out_body_file)
 
-		self.server.xcache[''.join([self.server.zcache_stat[_f][9],self.server.zcache_stat[_f][8]])] = [self.xcache_ttl + time.time(), self.out_head_s, self.out_body_file, self.out_body_size, self.out_body_file_lmt, self.out_body_mmap]
+		if len(self.server.xcache) > self.z_cache_size:
+			self.server.xcache.popitem()
+
+		_cc = self.server.z_resp_header[_f].get('Cache-Control')
+		_exp = self.server.z_resp_header[_f].get('Expires')
+		_t = time.time()  #now
+		if _cc:
+			if "private" in _cc or "no-cache" in _cc:
+				_ttl = -1
+			elif "max-age=" in _cc:
+				_age_s = ''
+				_index = _cc.find('max-age=') + len('max-age=')
+				while _cc[_index] in ['1','2','3','4','5','6','7','8','9','0']:
+					_age_s = ''.join([_age_s, _cc[_index]])
+					_index += 1
+					if _index > len(_cc) - 1:
+						break
+
+				_ttl = _t + int(_age_s)
+			else:
+				if _exp:
+					#Expires: Tue, 20 Oct 2015 04:27:25 GMT
+					_ttl = calendar.timegm(time.strptime(_exp, '%a, %d %b %Y %H:%M:%S GMT'))
+				else:
+					_ttl = self.xcache_ttl + _t
+		else:
+			if _exp:
+				_ttl = calendar.timegm(time.strptime(_exp, '%a, %d %b %Y %H:%M:%S GMT'))
+			else:
+				_ttl = self.xcache_ttl + _t
+
+		if _ttl > _t:
+			self.server.xcache[''.join([self.server.zcache_stat[_f][9],self.server.zcache_stat[_f][8]])] = [_ttl, self.out_head_s, self.out_body_file, self.out_body_size, self.out_body_file_lmt, self.out_body_mmap]
 
 	def z_transfer_backend(self, _f):
 		#from backend ttt
@@ -1860,11 +1893,13 @@ class _xDFSHandler(_xZHandler):
 		self.file_stage = 0
 		self.file_path = self.file_md5 = b''
 
+		"""
 		if conn and rw_mode == 0:
 			try:
 				self.peer_ip_s, _port_s = conn.getpeername()
 			except:
 				self.peer_ip_s = b''
+		"""
 
 	def z_pick_a_backend(self, return_all=False):
 		#self.z_hostname self.path self._r should be setup
@@ -1948,6 +1983,11 @@ class _xDFSHandler(_xZHandler):
 
 			if self.dfs_prefix_s == self.path[:len(self.dfs_prefix_s)]:
 				#only 3fs access allow PUT/DELETE action in z_lbs & x_dfs mode
+				try:
+					self.peer_ip_s, _port_s = self.sock.getpeername()
+				except:
+					self.peer_ip_s = b''
+
 				if self.peer_ip_s not in self.dfs_writer:
 					self.xResult = self.xR_ERR_HANDLE
 					return
