@@ -6,7 +6,7 @@ Doing this before running the program(minimal requirement):
 
   yum install python-gevent pysendfile python-setproctitle python-psutil python-pip(optional if install dpkt)
 
-dpkt module is also needed when running 3nsd DNS server, pip install it.
+Dpkt module is also needed when running 3nsd DNS server, pip install it.
 
 In a debian, you can use apt-get to install python-pip(pip) or python-setuptools(easy_install), then to install the packages following.
 
