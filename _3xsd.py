@@ -13,7 +13,7 @@
 # All 3 party modules copyright go to their authors(see their licenses).
 #
 
-__version__ = "0.0.8"
+__version__ = "0.0.9"
 
 import os, sys, io, time, calendar, random, multiprocessing
 import shutil, mmap, sendfile
@@ -1067,7 +1067,7 @@ class _xDNSHandler:
 		self.answer = str(self.q)
 	
 		#cache it, when expired at one ttl
-		self.server.cache[self.query_name] = [self.xcache_ttl + time.time(), self.answer]
+		self.server.xcache[self.query_name] = [self.xcache_ttl + time.time(), self.answer]
 
 	def x_send_out(self):
 	  	#self._wlock.acquire()
