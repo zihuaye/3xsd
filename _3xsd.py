@@ -13,7 +13,7 @@
 # All 3 party modules copyright go to their authors(see their licenses).
 #
 
-__version__ = "0.0.7"
+__version__ = "0.0.8"
 
 import os, sys, io, time, calendar, random, multiprocessing
 import shutil, mmap, sendfile
