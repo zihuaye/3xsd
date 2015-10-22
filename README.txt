@@ -8,6 +8,9 @@ Doing this before running the program(minimal requirement):
 
 Dpkt module is also needed when running 3nsd DNS server, pip install it.
 
+Or, of cause you can let pip do it all for you:
+  pip install 3xsd
+
 In a debian, you can use apt-get to install python-pip(pip) or python-setuptools(easy_install), then to install the packages following.
 
 Python Packages(Modules) version reference:
@@ -17,7 +20,6 @@ Python Packages(Modules) version reference:
   setproctitle==1.0.1
   psutil==0.6.1
   dpkt==1.6
-
 
 To install a module of specific version(like gevent 0.13.8), you can:
   pip install gevent==0.13.8
