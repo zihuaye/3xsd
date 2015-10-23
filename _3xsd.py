@@ -743,14 +743,14 @@ class _xHandler:
 			return
 
 		try:
-			a = path.split('.')
+			a = path.rsplit('.')
 			content_type = self.mimetype.get(a[1])
 			if content_type:
 				self.set_out_header("Content-Type", content_type)
 			else:
 				self.set_out_header("Content-Type", "application/octet-stream")
 		except:
-			pass
+			self.set_out_header("Content-Type", "application/octet-stream")
 
 		self.set_resp_code(200)
 
