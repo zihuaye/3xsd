@@ -13,12 +13,12 @@
 # All 3 party modules copyright go to their authors(see their licenses).
 #
 
-__version__ = "0.0.9"
+__version__ = "0.0.10"
 
 import os, sys, io, time, calendar, random, multiprocessing
 import shutil, mmap, sendfile
 import _socket as socket
-import select, errno, gevent, dpkt, ConfigParser, hashlib
+import select, errno, gevent, dpkt, ConfigParser, hashlib, struct
 from datetime import datetime
 from gevent.server import StreamServer
 from gevent.coros import Semaphore
@@ -434,11 +434,12 @@ class _xHandler:
 		self.sock = conn
 		self.addr = client_address
 		
-		self.out_body_file = self.out_body_mmap = self._c = None
+		self.out_body_file = self.out_body_mmap = self._c = self.accept_cncoding = None
 		self.out_body_size = self.out_body_file_lmt = self.cmd_get = self.cmd_head =  self.cmd_put =  self.cmd_delete = self.if_modified_since = self.keep_connection = 0
 		self.has_resp_body = self.xcache_hit = False
 		self.next_request = True
 		#self.vhost_mode = False
+		self.transfer_completed = 1
 
 		self.command = self.path = self.resp_line = self.resp_msg = self.out_head_s = self._r = self.hostname = self.xcache_key = b''
 		self.c_http_ver = self.s_http_ver = self.r_http_ver = 1
@@ -489,10 +490,13 @@ class _xHandler:
 		else:
 			self.keep_connection = 0
 
+		#accept_encoding = ['gzip', 'deflate', 'sdch'] or ['gzip'] or ['null']
+		#self.accept_encoding = self.in_headers.get("Accept-Encoding", "null").replace(' ','').split(',')
+
 		if self.server.zlb_mode:
 			if gen_xcache_key:
 				self.hostname = self.in_headers.get("Host", "127.0.0.1").split(':',1)[0]
-				self.xcache_key = ''.join([self.hostname,self.path])
+				self.xcache_key = ''.join([self.hostname, self.path])
 		else:
 			self.xcache_key = self.path
 
@@ -660,7 +664,7 @@ class _xHandler:
 					return self.PARSE_OK
 
 	def x_GET(self):
-		if not self.if_modified_since and self.xcache_key in self.server.xcache:
+		if self.if_modified_since == 0 and self.xcache_key in self.server.xcache:
 			self._c = self.server.xcache.get(self.xcache_key)
 			ttl = self._c[0]
 			if ttl >= time.time():
@@ -774,6 +778,7 @@ class _xHandler:
 			self.command = 'GET'
 			self.cmd_get = 1
 			_sent = 0
+			self.transfer_completed = 0
 
 			_s_sock_fileno = self.sock.fileno()
 			_rs = self.server.resume.get(_s_sock_fileno)
@@ -835,11 +840,13 @@ class _xHandler:
 							self.server.resume[self.sock.fileno()] = [self.out_body_file,
 									self.out_body_size, sent, self.keep_connection]
 							self.server.epoll.modify(self.sock.fileno(), select.EPOLLOUT)
+							self.transfer_completed = 0
 					else:
 						if self.out_body_size == sent:
 							del self.server.resume[self.sock.fileno()]
 							#self.server.epoll.modify(self.sock.fileno(), select.EPOLLIN|select.EPOLLET)
 							self.server.epoll.modify(self.sock.fileno(), select.EPOLLIN)
+							self.transfer_completed = 1
 						else:
 							self.server.resume[self.sock.fileno()] = [self.out_body_file,
 									self.out_body_size, sent, self.keep_connection]
@@ -866,7 +873,7 @@ class _xHandler:
 		self.in_headers.clear()
 		self.out_headers.clear()
 
-		if self.keep_connection == 0:
+		if self.keep_connection == 0 and self.transfer_completed == 1:
 			self.sock.close()
 
 def gevent_sendfile(out_fd, in_fd, offset, count):
@@ -1152,7 +1159,7 @@ class _xZHandler(_xHandler, _xDNSHandler):
 		_xHandler.init_handler(self, conn, client_address, rw_mode)
 
 		self.z_hostname = self.z_backends = self.z_host_addr = self.z_host_sock = None
-		self.z_header_length = self.z_finished = self.z_body_size = 0
+		self.z_header_length = self.z_finished = self.z_body_size = self.chuncked_encoding = self.transfer_completed = 0
 		self.response_headers_parsed = False
 
 		if conn:
@@ -1176,30 +1183,41 @@ class _xZHandler(_xHandler, _xDNSHandler):
 			return
 
 	def z_check_xcache(self, _f):
-                if not self.if_modified_since and self.xcache_key in self.server.xcache:
-                        self._c = self.server.xcache.get(self.xcache_key)
-                        ttl = self._c[0]
-                        if ttl >= time.time():
-                                #cache hit
-                                self.out_head_s, self.out_body_file, self.out_body_size, self.out_body_file_lmt, self.out_body_mmap = self._c[1:]
-                                self.has_resp_body = True
-                                self.xcache_hit = True
-				self.server.xcache_stat[_f] = self.xcache_key
-                                return
-                        else:
-                                #cache item expired
+                if self.if_modified_since == 0:
+			_key_found = False
+			self.accept_encoding = self.in_headers.get("Accept-Encoding")
+			if self.accept_encoding:
+				for x in self.accept_encoding.replace(' ','').split(','):
+					_key = ''.join([x, ':', self.xcache_key])
+					if _key in self.server.xcache:
+						_key_found = True
+						self.xcache_key = _key
+						break
+			if not _key_found:
+				if self.xcache_key in self.server.xcache:
+					 _key_found = True
 
-				#no need, in z_lbs mode, content is string format, not file or mmap buffer
-                                #self._c[2].close()  #close the file opened
-                                #self._c[5].close()  #close the mmap maped
+			if _key_found:
+                        	self._c = self.server.xcache.get(self.xcache_key)
+                        	ttl = self._c[0]
+                        	if ttl >= time.time():
+                                	#cache hit
+                                	self.out_head_s, self.out_body_file, self.out_body_size, self.out_body_file_lmt, self.out_body_mmap = self._c[1:]
+                                	self.has_resp_body = True
+                                	self.xcache_hit = True
+					self.server.xcache_stat[_f] = self.xcache_key
+                                	return
+                        	else:
+                                	#cache item expired
+                                	self._c = None
+                                	self.server.xcache.pop(self.xcache_key)
 
-                                self._c = None
-                                self.server.xcache.pop(self.xcache_key)
+					if _f in self.server.xcache_stat:
+                                		self.server.xcache_stat.pop(_f)
 
-				if _f in self.server.xcache_stat:
-                                	self.server.xcache_stat.pop(_f)
-
-		self.xcache_hit =False
+			self.xcache_hit =False
+		else:
+			self.xcache_hit =False
 
 	def __call__(self, fds):
 		for f, rw_mode in fds:
@@ -1311,6 +1329,7 @@ class _xZHandler(_xHandler, _xDNSHandler):
 				self.xResult = self.xR_ERR_PARSE
 
 			if _do_clean:
+				self.transfer_completed = 1
 				self.clean()
 
 	def z_parse_address(self, addr):
@@ -1486,7 +1505,7 @@ class _xZHandler(_xHandler, _xDNSHandler):
 			"""
 
 	def z_transfer_client(self, __f):
-		#to client
+		#to client 222
 		_cb = self.server.cb_conns.get(__f)
 		if _cb:
 			_c, _f = _cb
@@ -1501,9 +1520,11 @@ class _xZHandler(_xHandler, _xDNSHandler):
 			if self.server.zcache_stat[_f][4] == 1:
 				#finished all sent
 				self.server.epoll.modify(self.sock, select.EPOLLIN)
-				if self.server.zcache_stat[_f][7] == self.HTTP_OK and self.server.zcache_stat[_f][5] > 0:
-					#only 200 and body_size > 0 response item moved to xcache
-					self.zcache_to_xcache(_f)
+				if self.server.zcache_stat[_f][7] == self.HTTP_OK:
+					if self.server.zcache_stat[_f][10] == 1 or self.server.zcache_stat[_f][5] > 0:
+						#only 200 and chuncked or body_size > 0 response item moved to xcache
+						#here may be wrong, should use self.cmd_get instead of self.server.zcache_stat[_f][5]
+						self.zcache_to_xcache(_f)
 
 				self.server.z_reqs_cnt[_f] -= 1
 
@@ -1513,22 +1534,38 @@ class _xZHandler(_xHandler, _xDNSHandler):
 					self.server.cb_conns[__f] =  None
 					self.server.cb_conns[_f] = None
 			
-				#add idle list
-				if str(self.server.zaddrs[_f]) in self.server.zidles:
-					if _f not in self.server.zidles[str(self.server.zaddrs[_f])]:
-						self.server.zidles[str(self.server.zaddrs[_f])].insert(0, _f)#add to idle list
-				else:
-					self.server.zidles[str(self.server.zaddrs[_f])] = [_f]
+				_backend_sock = self.server.zconns.get(_f)
+				if _backend_sock:
+					if _backend_sock.fileno() == -1:
+						#backend closed connection
+						self.server.zconns.pop(_f)
+						self.server.zconns_stat.pop(_f)
+					else:
+						#add idle list
+						if str(self.server.zaddrs[_f]) in self.server.zidles:
+							if _f not in self.server.zidles[str(self.server.zaddrs[_f])]:
+								self.server.zidles[str(self.server.zaddrs[_f])].insert(0, _f)#add to idle list
+						else:
+							self.server.zidles[str(self.server.zaddrs[_f])] = [_f]
 
-				self.server.zconns_stat[_f] = [0, time.time()]  #conn idle
+						self.server.zconns_stat[_f] = [0, time.time()]  #conn idle
 
 				#clean zcache
 				self.server.zcache.pop(_f)
 				self.server.zcache_stat.pop(_f)
 				#self.server.z_path.pop(_f)
 
-			#finished or no more data yet
-			return True
+				#finished
+				return True
+
+			else:
+				#no more data yet or finished with no Content-Length? that's a problem.
+				_backend_sock = self.server.zconns.get(_f)
+				if _backend_sock:
+					if _backend_sock.fileno() == -1:
+						self.server.zcache_stat[_f][5] = self.server.zcache_stat[_f][2] - self.server.zcache_stat[_f][3]
+						self.server.zcache_stat[_f][4] = 1
+				return False
 
 		if len(self.server.zcache[_f][blockno][begin:]) > self.send_buf_size:
 			sent = self.sock.send(self.server.zcache[_f][blockno][begin:begin + self.send_buf_size])
@@ -1592,7 +1629,15 @@ class _xZHandler(_xHandler, _xDNSHandler):
 				_ttl = self.xcache_ttl + _t
 
 		if _ttl > _t:
-			self.server.xcache[''.join([self.server.zcache_stat[_f][9],self.server.zcache_stat[_f][8]])] = [_ttl, self.out_head_s, self.out_body_file, self.out_body_size, self.out_body_file_lmt, self.out_body_mmap]
+			_xcache_key = b''
+			_content_encoding = self.server.z_resp_header[_f].get('Content-Encoding')
+
+			if _content_encoding:
+				_xcache_key = ''.join([_content_encoding, ':', self.server.zcache_stat[_f][9],self.server.zcache_stat[_f][8]])
+			else:
+				_xcache_key = ''.join([self.server.zcache_stat[_f][9],self.server.zcache_stat[_f][8]])
+
+			self.server.xcache[_xcache_key] = [_ttl, self.out_head_s, self.out_body_file, self.out_body_size, self.out_body_file_lmt, self.out_body_mmap]
 
 	def z_transfer_backend(self, _f):
 		#from backend ttt
@@ -1613,7 +1658,7 @@ class _xZHandler(_xHandler, _xDNSHandler):
 
 		#self.server.zcache_stat[_f] sample:
 		#[2, 0, 25230, 217, 0, 25013, 1, 200, '/py/vms_rrd/vms-ping_day.png', 'vm0']
-		if _f in self.server.zcache and self.server.zcache_stat[_f][4] == 0:
+		if _f in self.server.zcache and self.server.zcache_stat[_f][4] == 0 and self.z_finished == 0:
 			#continue recv
 			"""
 				self.server.zcache_stat[_f][2] total_size_recv
@@ -1624,8 +1669,11 @@ class _xZHandler(_xHandler, _xDNSHandler):
 				self.server.zcache_stat[_f][7] http_status_code
 				self.server.zcache_stat[_f][8] path
 				self.server.zcache_stat[_f][9] hostname
+				self.server.zcache_stat[_f][10] chuncked encoding
 			"""
 			self.server.zcache[_f].append(_b)
+			self.server.zcache_stat[_f][2] += len(_b) 
+
 			if not self.response_headers_parsed:
 				if self.EOL2 in _b or self.EOL1 in _b:
 					#rebuild the response headers and check them
@@ -1633,8 +1681,8 @@ class _xZHandler(_xHandler, _xDNSHandler):
 					self.server.zcache_stat[_f][3] = self.z_header_length
 					self.server.zcache_stat[_f][6] = self.keep_connection
 					self.server.zcache_stat[_f][7] = self.resp_code
+
 			if self.server.zcache_stat[_f][5] > 0:
-				self.server.zcache_stat[_f][2] += len(_b) 
 				if self.server.zcache_stat[_f][2] == self.server.zcache_stat[_f][5] + self.server.zcache_stat[_f][3]:
 					#finished content-length
 					self.server.zcache_stat[_f][4] = 1
@@ -1643,25 +1691,19 @@ class _xZHandler(_xHandler, _xDNSHandler):
 				#finished chunked encoding
 				self.server.zcache_stat[_f][4] = 1
 				self.z_finished = 1
-		else:
+
+		elif self.z_finished == 0:
 			#first recv
-			"""
-			if _f in self.server.z_path:
-				_path = self.server.z_path[_f]
-			else:
-				print _f, self.server.zhosts[_f], self.path, self.server.zconns[_f]
-				return self.PARSE_ERROR
-			"""
 			_path = self.server.z_path[_f]
 			_z_hostname = self.server.zhosts[_f]
 			self.server.zcache[_f] = [_b]
 
-			#zcache_stat format: [block num, size sent, total_size_recv, header_length, finished, body_size, keep_connection,resp_code,path,hostname]
+			#zcache_stat format: [block num, size sent, total_size_recv, header_length, finished, body_size, keep_connection,resp_code,path,hostname,chuncked_encoding]
 			if self.EOL2 in _b or self.EOL1 in _b:
 				self.parse_backend_response_headers(_b, _f)
-				self.server.zcache_stat[_f] = [0, 0, len(_b), self.z_header_length, self.z_finished, self.z_body_size, self.keep_connection, self.resp_code, _path, _z_hostname]
+				self.server.zcache_stat[_f] = [0, 0, len(_b), self.z_header_length, self.z_finished, self.z_body_size, self.keep_connection, self.resp_code, _path, _z_hostname, self.chuncked_encoding]
 			else:
-				self.server.zcache_stat[_f] = [0, 0, len(_b), -1, 0, -1, -1, 0,  _path, _z_hostname]
+				self.server.zcache_stat[_f] = [0, 0, len(_b), -1, 0, -1, -1, 0,  _path, _z_hostname, self.chuncked_encoding]
 
 			_cb = self.server.cb_conns.get(_f)
 			if _cb:
@@ -1680,7 +1722,7 @@ class _xZHandler(_xHandler, _xDNSHandler):
 				#print "cb_conns:", self.server.cb_conns
 				#print "f:", _f, "zcache_stat:", self.server.zcache_stat, "z_reqs_cnt:", self.server.z_reqs_cnt
 
-		if self.z_finished:
+		if self.z_finished == 1:
 			self.server.epoll.unregister(_f)
 
 			return self.PARSE_OK
@@ -1688,7 +1730,7 @@ class _xZHandler(_xHandler, _xDNSHandler):
 			return self.PARSE_MORE
 
 	def parse_backend_response_headers(self, _b, _f):
-		#cut headers out
+		#cut headers out ppp
 		b = _b.split(self.EOL2, 1)
 		sp = len(self.EOL2)
 
@@ -1726,14 +1768,22 @@ class _xZHandler(_xHandler, _xDNSHandler):
 				c1 = self.in_headers.get("Transfer-Encoding")
 				if c1:
 					if c1.lower()== "chunked":
+						self.chuncked_encoding = 1
 						self.z_body_size = 0
 						if "0\r\n\r\n" in b[1]:
 							self.z_finished = 1
 					else:
 						self.z_body_size = -1
 				else:
-					self.z_body_size = -1
-					self.z_finished = 1
+					if self.z_host_sock.fileno() == -1:
+						#backend closed connection, transfer finished
+						self.z_body_size = len(_b) - self.z_header_length
+						self.z_finished = 1
+					elif self.resp_code > self.HTTP_OK:
+						self.z_body_size = 0
+						self.z_finished = 1
+					else:
+						self.z_body_size = 0
 		except:
 			self.z_body_size = -1
 			self.z_finished = 0
@@ -1765,8 +1815,10 @@ class _xZHandler(_xHandler, _xDNSHandler):
 		if _c_keep_connection != self.keep_connection:
 			if "Connection: keep-alive" in self.server.zcache[_f][0]:
 				self.server.zcache[_f][0] = self.server.zcache[_f][0].replace("Connection: keep-alive", "Connection: close", 1)
+				self.z_header_length -= 5
 			elif "Connection: close" in self.server.zcache[_f][0]:
 				self.server.zcache[_f][0] = self.server.zcache[_f][0].replace("Connection: close", "Connection: keep-alive", 1)
+				self.z_header_length += 5
 
 	def out_conns_stats(self):
 			print "--------------------------------------------------------------------------"
@@ -1893,14 +1945,6 @@ class _xDFSHandler(_xZHandler):
 		self.file_stage = 0
 		self.file_path = self.file_md5 = b''
 
-		"""
-		if conn and rw_mode == 0:
-			try:
-				self.peer_ip_s, _port_s = conn.getpeername()
-			except:
-				self.peer_ip_s = b''
-		"""
-
 	def z_pick_a_backend(self, return_all=False):
 		#self.z_hostname self.path self._r should be setup
 		if self.dfs_prefix_s == self.path[:len(self.dfs_prefix_s)]:
@@ -1910,7 +1954,7 @@ class _xDFSHandler(_xZHandler):
 			return _xZHandler.z_pick_a_backend(self)
 
 	def dfs_locate_backend(self, hostname, return_all=False):
-		#3fs locating algorithm   #aaa 
+		#3fs locating algorithm
 		#url example: http://hostname/_3fs_0/path/to/file, 0 for stage
 		#/path/to/file will be used to calculate out a standard md5 hex_string of 32 letters with lower case
 		#/path/to/file -> b4a91649090a2784056565363583d067
