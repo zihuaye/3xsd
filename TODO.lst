@@ -1,3 +1,4 @@
 1. Complete 3fsd PUT/DELETE method.
 2. xcache persistent storage
 3. 3wsd config: root index
+4. if 3xsd.conf not found at current dir, try /etc/3xsd.conf
