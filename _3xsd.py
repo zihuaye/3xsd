@@ -13,7 +13,7 @@
 # All 3 party modules copyright go to their authors(see their licenses).
 #
 
-__version__ = "0.0.10"
+__version__ = "0.0.11"
 
 import os, sys, io, time, calendar, random, multiprocessing
 import shutil, mmap, sendfile
@@ -375,7 +375,9 @@ class _xHandler:
 	
 	monthname = [None, 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
 	         	'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-	
+
+	index_files = ["index.html", "index.htm"]
+
 	mimetype = {'html': 'text/html', 'htm': 'text/html', 'txt': 'text/plain',
 			'css': 'text/css', 'xml': 'text/xml', 'js': 'application/x-javascript',
 			'png': 'image/png', 'jpg': 'image/jpeg', 'gif': 'image/gif', 'bin': 'application/octet-stream'}
@@ -406,6 +408,8 @@ class _xHandler:
 		self.in_headers = {}
 		self.out_headers = {}
 
+		self.homedir = Homedir
+
 		self.init_config()
 		self.init_handler(conn, client_address)
 
@@ -418,13 +422,26 @@ class _xHandler:
 		if not self.web_config_parsed:
 			try:
                 		self.web_config = ConfigParser.ConfigParser()
-                		self.web_config.read('3xsd.conf')
-                		_mime_types = self.web_config.get('3wsd', 'mimetypes')
-				for item in _mime_types.split(','):
-					if item:
-						k, v = item.split(':', 1)
-						if k and v:
-							self.mimetype[k] = v
+                		if not self.web_config.read('3xsd.conf'):
+					self.web_config.read('/etc/3xsd.conf')
+
+				for name, value in self.web_config.items('3wsd'):
+                                	if name == 'root':
+						if value:
+							self.homedir = value
+                                	elif name == 'index':
+						self.index_files = []
+						for item in value.split(','):
+							if item:
+								self.index_files.append(item)
+						if not self.index_files:
+							self.index_files = ["index.html", "index.htm"]
+                                	elif name == 'mimetypes':
+						for item in value.split(','):
+							if item:
+								k, v = item.split(':', 1)
+								if k and v:
+									self.mimetype[k] = v
 			except:
 				pass
 
@@ -697,12 +714,12 @@ class _xHandler:
 
 		"""
 		if self.vhost_mode:
-			path = ''.join([Homedir, '/', self.hostname, self.path])
+			path = ''.join([self.homedir, '/', self.hostname, self.path])
 		else:
-			path = ''.join([Homedir, self.path])
+			path = ''.join([self.homedir, self.path])
 		"""
 
-		path = ''.join([Homedir, self.path])
+		path = ''.join([self.homedir, self.path])
 
 		if os.path.isdir(path):
 			if not path.endswith('/'):
@@ -710,7 +727,7 @@ class _xHandler:
 				self.set_out_header("Location", ''.join([path, "/"]))
 				return
 
-		for index in "index.html", "index.htm":
+		for index in self.index_files:
 			index = os.path.join(path, index)
 			if os.path.exists(index):
 				path = index
@@ -925,7 +942,8 @@ class _xDNSHandler:
 		#else:
 		#	self._wlock = Semaphore()
 		self.config = ConfigParser.ConfigParser()
-		self.config.read('3xsd.conf')
+		if not self.config.read('3xsd.conf'):
+			self.config.read('/etc/3xsd.conf')
 
 		for name, value in self.config.items(config_section):
 			v = value.split(',', 1)
@@ -1883,7 +1901,8 @@ class _xDFSHandler(_xZHandler):
 	def init_dfs_config(self):
 		try:
                 	self.dfs_config = ConfigParser.ConfigParser()
-                	self.dfs_config.read('3xsd.conf')
+                	if not self.dfs_config.read('3xsd.conf'):
+				self.dfs_config.read('/etc/3xsd.conf')
 
 			for name, value in self.dfs_config.items('3fsd'):
 				if name == 'stage':
