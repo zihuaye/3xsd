@@ -52,6 +52,6 @@ When expanding the cluster, old files with old stage num in uri, can be located 
 
 When file is changed, it keeps the stage num original. When deleted and adding again, use the new stage num.
 
-Of cause, a server can belong to different stage, server a can belong to stage 0,1,2, if it's capacity is power enough.
+Of cause, a server can belong to different stage, server A can belong to stage 0,1,2, if it's capacity is power enough.
 
 The pool=... config item, is a list of servers at different stage, should be kept fixed at stage level, let say, you can't add a server to a stage randomly, adding servers must leading the stage num to increase. It dosen't matter of the sequence of servers, 3fsd will sort them at stage level.
