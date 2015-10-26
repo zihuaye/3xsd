@@ -1971,7 +1971,7 @@ class _xDFSHandler(_xZHandler):
 		_ret = []
 		while self.dfs_redundancy - i > 0:
 			_point = int(self.file_md5[self.dfs_region_mask*i:self.dfs_region_mask*(i+1)], base=16)
-			_serno = __serno = int(_point / float(self.dfs_region / self.dfs_pool_count[hostname][self.dfs_stage]) + 0.5) - 1
+			_serno = __serno = int(_point / float(self.dfs_region / self.dfs_pool_count[hostname][self.dfs_stage]))
 			while self.dfs_pool[hostname][self.dfs_stage][_serno] in _ret:
 				#make sure the redundancy copys not in same server
 				_serno = ( _serno + 1 ) % self.dfs_pool_count[hostname][self.dfs_stage]
