@@ -42,7 +42,7 @@ region mask FF0000000000000000000000000000, we got "b4", the first 2 hex num in 
 
 
 Redundancy=2, we have 2 copy of data storaged. How to locate all of them?
-As above, the second copy's location is at "a9", the second 2 hex num in md5, 6.601, rounded at server 7. If it's same with first one, just has the server num plus one, server 8 then.
+As above, the second copy's location is at "a9", the second 2 hex num in md5, 6.601, rounded at server 6. If it's same with first one, just has the server num plus one, server 8 then.
 
 In theory, with region=256, we can have redundancy=16, with region=4096, redundancy=10.
 
