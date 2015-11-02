@@ -35,11 +35,12 @@ if __name__ == "__main__":
 	x_dfs = 0
 	z_lbs = 0
 	uname = None
+	xcache_shelf = 0
 
 	cpu_count = multiprocessing.cpu_count()
 	cpu_affinity = 0
 
-	opts, args = getopt.getopt(sys.argv[1:], "vafhimngrswzp:c:b:k:d:u:")
+	opts, args = getopt.getopt(sys.argv[1:], "vafhilmngrswzp:c:b:k:d:u:")
 	
 	for o, a in opts:
 		if o == "-p":
@@ -86,6 +87,8 @@ if __name__ == "__main__":
 			os.chdir(homedir)
 		elif o == "-a":
 			cpu_affinity = 1
+		elif o == "-l":
+			xcache_shelf = 1
 		elif o == "-v":
 			print "version:", _3xsd.__version__
 			sys.exit()
@@ -102,6 +105,7 @@ if __name__ == "__main__":
 			print("-h : help information")
 			print("-i : dns mode(3nsd, an intelligent dns server with failover support)")
 			print("-k <num> : multi-workers with num")
+			print("-l : turn on persistent storage of xcache(for 3zsd&3fsd), 2 level cache: xcache&xcache_shelf")
 			print("-m : multi-workers depending on cpu cores")
 			print("-n : using system native epoll(default)")
 			print("-p <num> : port number(default:8000)")
@@ -172,7 +176,8 @@ if __name__ == "__main__":
 		my_title_pre = "%s" % program_name
 	
 	_3xsd.Homedir = homedir
-	
+	_3xsd.Xcache_shelf = xcache_shelf
+
 	#set process title to identify master, worker, etc.
 	if len(sys.argv) > 1:
 		if custum_home > 0:
