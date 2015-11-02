@@ -13,12 +13,12 @@
 # All 3 party modules copyright go to their authors(see their licenses).
 #
 
-__version__ = "0.0.11"
+__version__ = "0.0.13"
 
 import os, sys, io, time, calendar, random, multiprocessing
-import shutil, mmap, sendfile
+import shutil, mmap, sendfile, zlib, gzip, cStringIO, copy
 import _socket as socket
-import select, errno, gevent, dpkt, ConfigParser, hashlib, struct
+import select, errno, gevent, dpkt, ConfigParser, hashlib, struct, shelve
 from datetime import datetime
 from gevent.server import StreamServer
 from gevent.coros import Semaphore
@@ -31,6 +31,7 @@ Workers = 0     #workers to fork, 0 for no worker
 Homedir = None  #3xsd working home(document root)
 Handler = None  #3xsd handler name, not an instance
 Server = None   #3xsd server instance, init at startup
+Xcache_shelf = 0#persistent storage of xcache(3zsd&3fsd)
 _Name = '3xsd'  #program name, changes at startup
 
 o_socket = socket
@@ -87,6 +88,9 @@ class _Z_EpollServer(StreamServer):
 	x_reqs = {}
 	resume = {}
 
+	gzip_shelf = None
+	_gzs = {}
+
 	#for 3zsd - z server
 	cb_conns = {}
 	k_conns = {}
@@ -103,6 +107,8 @@ class _Z_EpollServer(StreamServer):
 	z_resp_header = {}
 	z_path = {}
 	c_path = {}
+
+	xcache_shelf = None
 
 	def __init__(self, server_address, RequestHandlerClass, backlog=1000, spawn=None,
 							tcp=True, recv_buf_size=16384, send_buf_size=65536):
@@ -378,15 +384,26 @@ class _xHandler:
 
 	index_files = ["index.html", "index.htm"]
 
+	gzip_types = ["html", "htm", "js", "css", "txt", "xml"]
+
 	mimetype = {'html': 'text/html', 'htm': 'text/html', 'txt': 'text/plain',
 			'css': 'text/css', 'xml': 'text/xml', 'js': 'application/x-javascript',
 			'png': 'image/png', 'jpg': 'image/jpeg', 'gif': 'image/gif', 'bin': 'application/octet-stream'}
+
 	web_config = None
 	web_config_parsed = False
 	
 	_r = b''  #request headers
 	
 	xcache_ttl = 5  	#normally, 5-10 seconds internal cache time of items
+	xcache_size = 1000000   #1 million items, about 1/3GB(333MB) mem used
+	x_shelf_size = 1000000  #1 million items in disk, about 30GB disk size with average item size 30KB
+
+	gzip_on = False
+	gzip_size = 1000	 #default >1KB file size can be gzipped
+	gzip_max_size = 10000000 #default <=10MB file size can be gzipped
+
+	multip = {'k':1000, 'K':1000, 'm':1000000, 'M':1000000, 'g':1000000000,'G':1000000000}
 
 	def __init__(self, conn, client_address, server, native_epoll=True,
 				gevent_stream=False, recv_buf_size=16384, send_buf_size=65536, pipelining=False):
@@ -436,12 +453,36 @@ class _xHandler:
 								self.index_files.append(item)
 						if not self.index_files:
 							self.index_files = ["index.html", "index.htm"]
-                                	elif name == 'mimetypes':
+                                	elif name == 'mime_types':
 						for item in value.split(','):
 							if item:
 								k, v = item.split(':', 1)
 								if k and v:
 									self.mimetype[k] = v
+                                	elif name == 'gzip':
+						if value.lower() == "on":
+							self.gzip_on = True
+							self.server.gzip_shelf = shelve.open('gzip.shelf', writeback=True)
+                                	elif name == 'gzip_size':
+						if value[-1] in ['k','m','g','K','M','G']:
+							_multip = self.multip[value[-1]]
+							self.gzip_size = int(value[:-1])*_multip
+						else:
+							self.gzip_size = int(value)
+                                	elif name == 'gzip_max_size':
+						if value[-1] in ['k','m','g','K','M','G']:
+							_multip = self.multip[value[-1]]
+							self.gzip_max_size = int(value[:-1])*_multip
+						else:
+							self.gzip_max_size = int(value)
+                                	elif name == 'gzip_types':
+						for item in value.split(','):
+							if item:
+								if item not in self.gzip_types:
+									if item[0] == '-':
+										self.gzip_types.remove(item[1:])
+									else:
+										self.gzip_types.append(item)
 			except:
 				pass
 
@@ -451,10 +492,11 @@ class _xHandler:
 		self.sock = conn
 		self.addr = client_address
 		
-		self.out_body_file = self.out_body_mmap = self._c = self.accept_cncoding = None
+		self.out_body_file = self.out_body_mmap = self._c = self.accept_encoding = None
 		self.out_body_size = self.out_body_file_lmt = self.cmd_get = self.cmd_head =  self.cmd_put =  self.cmd_delete = self.if_modified_since = self.keep_connection = 0
 		self.has_resp_body = self.xcache_hit = False
-		self.next_request = True
+		self.canbe_gzipped = self.gzip_transfer = self.gzip_chunked = False
+		self.gzip_finished = self.next_request = True
 		#self.vhost_mode = False
 		self.transfer_completed = 1
 
@@ -686,21 +728,35 @@ class _xHandler:
 			ttl = self._c[0]
 			if ttl >= time.time():
 				#cache hit
-				self.out_head_s, self.out_body_file, self.out_body_size, self.out_body_file_lmt, self.out_body_mmap = self._c[1:]
+				self.out_head_s, self.out_body_file, self.out_body_size, self.out_body_file_lmt, self.out_body_mmap, self.canbe_gzipped = self._c[1:]
 				self.has_resp_body = True
-				self.xcache_hit = True
-				return
+
+				if self.canbe_gzipped:
+					for x in self.in_headers.get("Accept-Encoding", "null").replace(' ','').split(','):
+						if x == "gzip":
+							self.gzip_transfer = True
+							break
+					if self.gzip_transfer:
+						if  self.xcache_key in self.server.gzip_shelf:
+							if self.server.gzip_shelf[self.xcache_key][4]==self.out_body_file_lmt:
+								self.out_head_s=self.server.gzip_shelf[self.xcache_key][1]
+								self.out_body_file=self.server.gzip_shelf[self.xcache_key][2]
+								self.out_body_size=self.server.gzip_shelf[self.xcache_key][3]
+								self.xcache_hit = True
+								return
+							else:
+								self.xcache_hit = False
+						else:
+							self.xcache_hit = False
+					else:
+						self.xcache_hit = True
+						return
+				else:
+					self.xcache_hit = True
+					return
 			else:
 				#cache item expired
-				"""
-				#avoid using try/except to improve performance
-				try:
-					self._c[2].close()  #close the file opened
-					self._c[5].close()  #close the mmap maped
-				except:
-					pass
-				"""
-				if not self._c[2].closed:  #close the file opened, if not closed
+				if isinstance(self._c[2], file) and not self._c[2].closed:  #close the file opened, if not closed
 					self._c[2].close()
 
 				if self._c[5]:  #close the mmap maped, if exists
@@ -709,8 +765,9 @@ class _xHandler:
 				self._c = None
 				self.server.xcache.pop(self.xcache_key)
 
+				self.xcache_hit = False
+
 		#cache miss or if_modified_since request
-		self.xcache_hit = False
 
 		"""
 		if self.vhost_mode:
@@ -768,6 +825,9 @@ class _xHandler:
 			content_type = self.mimetype.get(a[1])
 			if content_type:
 				self.set_out_header("Content-Type", content_type)
+				if self.gzip_on and self.r_http_ver == self.HTTP11:
+					if a[1] in self.gzip_types and self.out_body_size > self.gzip_size and self.out_body_size <= self.gzip_max_size:
+						self.canbe_gzipped = True
 			else:
 				self.set_out_header("Content-Type", "application/octet-stream")
 		except:
@@ -800,7 +860,16 @@ class _xHandler:
 			_s_sock_fileno = self.sock.fileno()
 			_rs = self.server.resume.get(_s_sock_fileno)
 			if _rs:
-				self.out_body_file, self.out_body_size, sent, self.keep_connection = _rs
+				self.out_body_file, self.out_body_size, sent, self.keep_connection, self.gzip_transfer, self.xcache_key = _rs
+				if self.gzip_transfer:
+					_org_file = self.server.xcache[self.xcache_key][2]
+					_org_size = self.server.xcache[self.xcache_key][3]
+					self.out_head_s = self.server.gzip_shelf[self.xcache_key][1]
+					self.out_body_file = self.server.gzip_shelf[self.xcache_key][2]
+					self.out_body_size = self.server.gzip_shelf[self.xcache_key][3]
+					_file_lmt = self.server.gzip_shelf[self.xcache_key][4]
+					_gzip_pos = self.server.gzip_shelf[self.xcache_key][5]
+					self.gzip_finished = self.server.gzip_shelf[self.xcache_key][6]
 			else:
 				#no such resume, must be first trans
 				self.server.epoll.modify(_s_sock_fileno, select.EPOLLIN)
@@ -811,15 +880,91 @@ class _xHandler:
 
 		#At this point, begin transfer response, first to roll out headers
 		if not self.xcache_hit:
+			_t = time.time()
 			if len(self.out_headers) > 0:
-				self.out_head_s = ''.join([self.resp_line, "\nServer: ", self.server_version, "\nDate: ", self.date_time_string(time.time()), '\n', '\n'.join(['%s: %s' % (k, v) for k, v in self.out_headers.items()]), '\n'])
+				self.out_head_s = ''.join([self.resp_line, "\nServer: ", self.server_version, "\nDate: ", self.date_time_string(_t), '\n', '\n'.join(['%s: %s' % (k, v) for k, v in self.out_headers.items()]), '\n'])
 			else:
-				self.out_head_s = ''.join([self.resp_line, "\nServer: ", self.server_version, "\nDate: ", self.date_time_string(time.time()), '\n'])
+				self.out_head_s = ''.join([self.resp_line, "\nServer: ", self.server_version, "\nDate: ", self.date_time_string(_t), '\n'])
+
 			if self.resp_code == self.HTTP_OK and self.out_body_size > 0:
 				#Only 200 and body_size > 0 response will be cached, [ttl, out_head_s, f, fsize, f_lmt, mmap], and file smaller than 1KB will be mmaped
-				if self.out_body_size < 1000:
+				if self.out_body_size < 1000 and not self.canbe_gzipped:
 					self.out_body_mmap = mmap.mmap(self.out_body_file.fileno(), 0, prot=mmap.PROT_READ)
-				self.server.xcache[self.xcache_key] = [self.xcache_ttl + time.time(), self.out_head_s, self.out_body_file, self.out_body_size, self.out_body_file_lmt, self.out_body_mmap]
+				else:
+					if self.canbe_gzipped:
+						for x in self.in_headers.get("Accept-Encoding", "null").replace(' ','').split(','):
+							if x == "gzip":
+								self.gzip_transfer = True
+								break
+
+						if self.gzip_transfer:
+							#generate gzip cache item
+							try:
+								#gzip it
+								_gzf = zlib.compressobj(6,
+											zlib.DEFLATED,
+											zlib.MAX_WBITS | 16,
+											zlib.DEF_MEM_LEVEL,
+											0)
+								self.out_body_file.seek(0)
+								if self.out_body_size > self.send_buf_size/2:
+									self.gzip_chunked = True
+									_ss = _gzf.compress(self.out_body_file.read(self.send_buf_size/2))
+									_ss = ''.join([_ss, _gzf.flush(zlib.Z_SYNC_FLUSH)])
+								else:
+									_ss = _gzf.compress(self.out_body_file.read(self.out_body_size))
+									_ss = ''.join([_ss, _gzf.flush(zlib.Z_FINISH)])
+
+
+								_out_headers = copy.copy(self.out_headers)
+								_out_headers["Content-Encoding"] = "gzip"
+								if self.gzip_chunked:
+									_out_headers["Transfer-Encoding"] = "chunked"
+									try:
+										del _out_headers["Content-Length"]
+									except:
+										pass
+								else:
+									_out_headers["Content-Length"] = len(_ss)
+								_out_head_s = ''.join([self.resp_line, "\nServer: ", self.server_version, "\nDate: ", self.date_time_string(_t), '\n', '\n'.join(['%s: %s' % (k, v) for k, v in _out_headers.items()]), '\n'])
+								#keep the mem cache of gzip_shelf limitted
+								while len(self.server.gzip_shelf.cache) > 1000:
+									self.server.gzip_shelf.cache.popitem()
+
+								#keep the disk cache of gzip_shelf limitted
+								if len(self.server.gzip_shelf) > self.x_shelf_size:
+									self.server.gzip_shelf.popitem()
+
+								if self.gzip_chunked:
+									#[file size original, headers, content, body_size, file modified time, current gzip position, finished]
+									_sss = ''.join([hex(len(_ss))[2:], '\r\n', _ss, '\r\n'])
+									self.server.gzip_shelf[self.xcache_key] = [self.out_body_size, _out_head_s, _sss, len(_sss), self.out_body_file_lmt, self.send_buf_size/2, False]
+									self.server._gzs[self.xcache_key] = _gzf
+								else:
+									self.server.gzip_shelf[self.xcache_key] = [self.out_body_size, _out_head_s, _ss, len(_ss), self.out_body_file_lmt, self.out_body_size, True]
+
+								if hasattr(self.server.gzip_shelf.dict, 'sync'):
+									self.server.gzip_shelf.dict.sync()
+							except:
+								pass  #zzz
+
+				if len(self.server.xcache) > self.xcache_size:
+					self.server.xcache.popitem()
+
+				#put xcache item, every item take about 8+300+8+8+8+8+1=340 bytes
+				#3 items per 1KB mem, 3k items per 1MB mem, 3M items per 1GB mem
+				self.server.xcache[self.xcache_key] = [self.xcache_ttl + _t, self.out_head_s, self.out_body_file, self.out_body_size, self.out_body_file_lmt, self.out_body_mmap, self.canbe_gzipped]
+
+				if self.gzip_transfer:
+					_org_file = self.server.xcache[self.xcache_key][2]
+					_org_size = self.server.xcache[self.xcache_key][3]
+					self.out_head_s = self.server.gzip_shelf[self.xcache_key][1]
+					self.out_body_file = self.server.gzip_shelf[self.xcache_key][2]
+					self.out_body_size = self.server.gzip_shelf[self.xcache_key][3]
+					_file_lmt = self.server.gzip_shelf[self.xcache_key][4]
+					_gzip_pos = self.server.gzip_shelf[self.xcache_key][5]
+					self.gzip_finished = self.server.gzip_shelf[self.xcache_key][6]
+
 			elif self.resp_code >= self.HTTP_BAD_REQUEST:
 				self.out_head_s = ''.join([self.out_head_s, "Content-Length: ", str(len(self.resp_msg) + 4), '\n'])
 
@@ -827,7 +972,7 @@ class _xHandler:
 		if self.has_resp_body and self.out_body_file and self.cmd_get == 1:
 			if self.out_body_mmap:
 				self.send_out_all_headers(extra=self.out_body_mmap[:])
-			elif isinstance(self.out_body_file, str) and self.out_body_size < 1000:
+			elif isinstance(self.out_body_file, str) and self.out_body_size < 1000 and self.gzip_finished:
 				self.send_out_all_headers(extra=self.out_body_file)
 			else:
 				#Try send as much as data once in a TCP packet
@@ -846,6 +991,7 @@ class _xHandler:
 
 				try:
 					if isinstance(self.out_body_file, str):
+						#_sent = self.sock.send(self.out_body_file[sent:_send_buf+sent])
 						_sent = self.sock.send(self.out_body_file[sent:_send_buf+sent])
 					else:
 						_sent = sendfile.sendfile(self.sock.fileno(), self.out_body_file.fileno(),
@@ -853,26 +999,64 @@ class _xHandler:
 					sent += _sent
 					if self.resume_transfer == 0:
 						#after transfer snd_buf data, requeue event, let other event to be handled
-						if sent < self.out_body_size:
+						if sent < self.out_body_size or not self.gzip_finished:
 							self.server.resume[self.sock.fileno()] = [self.out_body_file,
-									self.out_body_size, sent, self.keep_connection]
+									self.out_body_size, sent, self.keep_connection,
+									self.gzip_transfer, self.xcache_key]
 							self.server.epoll.modify(self.sock.fileno(), select.EPOLLOUT)
 							self.transfer_completed = 0
 					else:
-						if self.out_body_size == sent:
+						if self.out_body_size == sent and self.gzip_finished:
 							del self.server.resume[self.sock.fileno()]
 							#self.server.epoll.modify(self.sock.fileno(), select.EPOLLIN|select.EPOLLET)
 							self.server.epoll.modify(self.sock.fileno(), select.EPOLLIN)
 							self.transfer_completed = 1
 						else:
 							self.server.resume[self.sock.fileno()] = [self.out_body_file,
-									self.out_body_size, sent, self.keep_connection]
+									self.out_body_size, sent, self.keep_connection,
+									self.gzip_transfer, self.xcache_key]
 				except OSError as e:
 					if e[0] == errno.EAGAIN:
 					#send buffer full?just wait to resume transfer
 					#and gevent mode can't reach here, beacause gevent_sendfile intercepted the exception
 						 self.server.resume[self.sock.fileno()] = [self.out_body_file,
-                                                                        self.out_body_size, sent, self.keep_connection]
+                                                                        self.out_body_size, sent, self.keep_connection,
+									self.gzip_transfer, self.xcache_key]
+
+				if not self.gzip_finished:
+					#continue gen gzip chunked encoding file data, zzz
+					_gzf = self.server._gzs.get(self.xcache_key)
+
+					if not _gzf:
+						#this wrong, may cause error, just in case
+						_gzf = zlib.compressobj(6,
+								zlib.DEFLATED,
+								zlib.MAX_WBITS | 16,
+								zlib.DEF_MEM_LEVEL,
+								0)
+
+					if _org_size > _gzip_pos + self.send_buf_size/2:
+						_z_buf_size = self.send_buf_size/2
+						_flush_mode = zlib.Z_SYNC_FLUSH
+					else:
+						_z_buf_size = _org_size - _gzip_pos
+						self.gzip_finished = True
+						_flush_mode = zlib.Z_FINISH
+
+					_org_file.seek(_gzip_pos)
+					_ss = _gzf.compress(_org_file.read(_z_buf_size))
+					_ss = ''.join([_ss, _gzf.flush(_flush_mode)])
+
+					_sss = ''.join([self.out_body_file, hex(len(_ss))[2:], '\r\n', _ss, '\r\n'])
+
+					if self.gzip_finished:
+						_sss = ''.join([_sss, '0\r\n\r\n'])
+						self.server._gzs.pop(self.xcache_key)
+
+					self.server.gzip_shelf[self.xcache_key] = [_org_size, self.out_head_s, _sss, len(_sss), _file_lmt, _gzip_pos + _z_buf_size, self.gzip_finished]
+
+					if hasattr(self.server.gzip_shelf.dict, 'sync'):
+						self.server.gzip_shelf.dict.sync()
 
 				#Now, transfer complete, resume nature behavior of TCP/IP stack, as turned before
 				if self.keep_connection == 1 and self.resume_transfer == 0:
@@ -1159,8 +1343,11 @@ class _xZHandler(_xHandler, _xDNSHandler):
 
 	_f = None #socket fileno
 
-	z_cache_size = 1000  	#limit the xcache size, preventing too large
-	z_idle_ttl = 20  	#backend connections have a idle timeout of 30 seconds
+	z_cache_size = 1000  	#limit the xcache size in mem, about 30MB size with average file size 30KB
+	z_idle_ttl = 20  	#backend connections have a idle timeout of 20 seconds
+
+	z_xcache_shelf = False  #persistent storage of xcache
+	z_shelf_size = 1000000  #1 million files on-disk cache, about 30GB disk size with average file size 30KB
 
 	def __init__(self, conn, client_address, server, native_epoll=True,
 					gevent_stream=False, recv_buf_size=16384, send_buf_size=65536, z_mode=0):
@@ -1172,6 +1359,9 @@ class _xZHandler(_xHandler, _xDNSHandler):
 		else:
 			self.z_mode = 0
 
+		if Xcache_shelf == 1:
+			self.z_xcache_shelf = True
+			self.server.xcache_shelf = shelve.open('xcache.shelf', writeback=True)
 
 	def init_handler(self, conn, client_address, rw_mode=0):
 		_xHandler.init_handler(self, conn, client_address, rw_mode)
@@ -1202,7 +1392,10 @@ class _xZHandler(_xHandler, _xDNSHandler):
 
 	def z_check_xcache(self, _f):
                 if self.if_modified_since == 0:
+
 			_key_found = False
+			_in_shelf = False
+
 			self.accept_encoding = self.in_headers.get("Accept-Encoding")
 			if self.accept_encoding:
 				for x in self.accept_encoding.replace(' ','').split(','):
@@ -1211,12 +1404,23 @@ class _xZHandler(_xHandler, _xDNSHandler):
 						_key_found = True
 						self.xcache_key = _key
 						break
+					elif self.z_xcache_shelf and _key in self.server.xcache_shelf:
+						_key_found = True
+						_in_shelf = True
+						self.xcache_key = _key
+						break
 			if not _key_found:
 				if self.xcache_key in self.server.xcache:
 					 _key_found = True
+				elif self.z_xcache_shelf and self.xcache_key in self.server.xcache_shelf:
+					 _key_found = True
+					 _in_shelf = True
 
 			if _key_found:
-                        	self._c = self.server.xcache.get(self.xcache_key)
+				if not _in_shelf:
+                        		self._c = self.server.xcache.get(self.xcache_key)
+				else:
+                        		self._c = self.server.xcache[self.xcache_key] = self.server.xcache_shelf.get(self.xcache_key)
                         	ttl = self._c[0]
                         	if ttl >= time.time():
                                 	#cache hit
@@ -1228,7 +1432,14 @@ class _xZHandler(_xHandler, _xDNSHandler):
                         	else:
                                 	#cache item expired
                                 	self._c = None
-                                	self.server.xcache.pop(self.xcache_key)
+					if not _in_shelf:
+                                		self.server.xcache.pop(self.xcache_key)
+					else:
+						try:
+                                			del self.server.xcache_shelf[self.xcache_key]
+						except:
+							#may be problem in concurrent mode
+							pass
 
 					if _f in self.server.xcache_stat:
                                 		self.server.xcache_stat.pop(_f)
@@ -1598,29 +1809,14 @@ class _xZHandler(_xHandler, _xDNSHandler):
 		return False
 
 	def zcache_to_xcache(self, _f):
-		#only 200 and body_size > 0 response item moved to xcache
-                if self.r_http_ver == self.HTTP11:
-                        _resp_line = "HTTP/1.1 200 OK"
-                else:
-                        _resp_line = "HTTP/1.0 200 OK"
-
-		try:
-			self.server.z_resp_header[_f].pop("Connection")
-		except:
-			pass
-
-		self.out_head_s = ''.join([_resp_line, '\n', '\n'.join(['%s: %s' % (k, v) for k, v in self.server.z_resp_header[_f].items()]), '\n'])
-
-		_resp = ''.join(self.server.zcache[_f])
-		self.out_body_file = _resp[self.server.zcache_stat[_f][3]:]
-		self.out_body_size = len(self.out_body_file)
-
-		if len(self.server.xcache) > self.z_cache_size:
-			self.server.xcache.popitem()
+		#remember that only 200 and body_size > 0 response item will be moved to xcache
 
 		_cc = self.server.z_resp_header[_f].get('Cache-Control')
 		_exp = self.server.z_resp_header[_f].get('Expires')
+
+		_ttl = 0
 		_t = time.time()  #now
+
 		if _cc:
 			if "private" in _cc or "no-cache" in _cc:
 				_ttl = -1
@@ -1647,6 +1843,25 @@ class _xZHandler(_xHandler, _xDNSHandler):
 				_ttl = self.xcache_ttl + _t
 
 		if _ttl > _t:
+			if len(self.server.xcache) > self.z_cache_size:
+				self.server.xcache.popitem()
+
+                	if self.r_http_ver == self.HTTP11:
+                        	_resp_line = "HTTP/1.1 200 OK"
+                	else:
+                        	_resp_line = "HTTP/1.0 200 OK"
+
+			try:
+				self.server.z_resp_header[_f].pop("Connection")
+			except:
+				pass
+
+			self.out_head_s = ''.join([_resp_line, '\n', '\n'.join(['%s: %s' % (k, v) for k, v in self.server.z_resp_header[_f].items()]), '\n'])
+
+			_resp = ''.join(self.server.zcache[_f])
+			self.out_body_file = _resp[self.server.zcache_stat[_f][3]:]
+			self.out_body_size = len(self.out_body_file)
+
 			_xcache_key = b''
 			_content_encoding = self.server.z_resp_header[_f].get('Content-Encoding')
 
@@ -1656,6 +1871,31 @@ class _xZHandler(_xHandler, _xDNSHandler):
 				_xcache_key = ''.join([self.server.zcache_stat[_f][9],self.server.zcache_stat[_f][8]])
 
 			self.server.xcache[_xcache_key] = [_ttl, self.out_head_s, self.out_body_file, self.out_body_size, self.out_body_file_lmt, self.out_body_mmap]
+
+			if self.z_xcache_shelf:
+				try:
+					if len(self.server.xcache_shelf) > self.z_shelf_size:
+						if hasattr(self.server.xcache_shelf.dict, 'first'):
+							#dbhash format
+							k, v = self.server.xcache_shelf.dict.first()
+							del self.server.xcache_shelf[k]
+						if hasattr(self.server.xcache_shelf.dict, 'firstkey'):
+							#gdbm format
+							del self.server.xcache_shelf[self.server.xcache_shelf.dict.firstkey()]
+				except:
+					pass
+
+				try:
+					while len(self.server.xcache_shelf.cache) > self.z_cache_size:
+						self.server.xcache_shelf.cache.popitem()
+
+					self.server.xcache_shelf[_xcache_key] = self.server.xcache[_xcache_key]
+					if hasattr(self.server.xcache_shelf.dict, 'sync'):
+						#self.server.xcache.dict is an anydbm object, mostly gdbm
+						self.server.xcache_shelf.dict.sync()
+				except:
+					#may be problem in concurrent mode
+					pass
 
 	def z_transfer_backend(self, _f):
 		#from backend ttt
