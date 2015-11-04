@@ -22,7 +22,7 @@ Performance:
   3wsd:
   Small file under 1KB single process test(full in-mem), with nginx configuring accept_mutex off, 80% performance.
   Multi process test, with reuse_port enabling kernel, 95% performance of nginx.
-  The test is not quite strict， but I just wan to say it's fast enough.
+  The test is not quite strict， but I just want to say it's fast enough.
   
   3zsd:
   About 80% performance of 3wsd.
