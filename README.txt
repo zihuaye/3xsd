@@ -1,5 +1,9 @@
 3xsd is a native epoll server serving TCP/UDP connections, a high performance static web server, a failover dns server, a http-based distributed file server(implementing), and a load-balance proxy-cache server.
 
+Features in detail:
+
+3wsd - web server support: static files, using mmap&sendfile to send files with in-mem xcache, transparent gzip file transfer with fixed length(small file) & chunked(large file)
+
 OS requirement: CentOS 6.x with python 2.6/2.7, Debian 6/7.
 
 Doing this before running the program(minimal requirement):
