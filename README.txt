@@ -2,9 +2,9 @@
 
 Features in detail:
 
-3wsd - web server supporting: static files, using mmap & sendfile to send files with in-mem xcache, 
-       transparent gzip file transfer with fixed length(small file) & chunked(large file), 
-       persistent storage of gzip files
+3wsd - web server supporting: static files, event driven(epoll), using mmap & sendfile to send files,
+       in-mem xcache, transparent gzip content transfer with fixed length(small file) & 
+       chunked(large file), persistent storage of gzip files
        
 3nsd - dns server supporting: only A record resolution, domainname failover(refer to conf file),
        ip icmp probe & hide when fail, round robbin ip resolving
@@ -12,7 +12,7 @@ Features in detail:
 3zsd - proxy server supporting: load balance backend servers, in-mem file caching & 
        persistent cache file storage
 
-3fsd - distribute web file system supporting: mass unlimitted file storage, easy to expand, 
+3fsd - distribute web file system supporting: mass unlimitted file storage, easy to expand,
        O(1) location algorithm, non-centralized, can work with stand web server(WebDAV) in proxy mode
 
 More to find in .conf file.
@@ -20,9 +20,10 @@ More to find in .conf file.
 Performance:
 
   3wsd:
-  Small file under 1KB single process test(full in-mem), with nginx configuring accept_mutex off, 80% performance.
-  Multi process test, with reuse_port enabling kernel, 95% performance of nginx(and beyond, may be 105%, based on process number, I tested 4).
-  The test is not quite strict， but I just want to say it's fast enough.
+  Small file under 1KB single process test(full in-mem), contrast with nginx configuring accept_mutex off, 
+80% performance.
+  Multi processes test, with reuse_port enabling kernel, 95% performance of nginx(and beyond, may be 105% or more, based on process number, I tested 2-4).
+  The tests above is not quite strict， but I just want to say that it's fast enough.
   
   3zsd:
   About 80% performance of 3wsd.
