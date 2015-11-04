@@ -14,6 +14,7 @@ Features in detail:
 
 3fsd - distribute web file system supporting: mass unlimitted file storage, easy to expand,
        O(1) location algorithm, non-centralized, can work with stand web server(WebDAV) in proxy mode
+       file redundancy
 
 More to find in .conf file.
 
