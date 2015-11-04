@@ -8,7 +8,10 @@ Features in detail:
        ip icmp probe & hide when fail, round robbin ip resolving
 3zsd - proxy server supporting: load balance backend servers, in-mem file caching & persistent cache file storage
 
-3fsd - distribute web file system supporting: mass unlimitted file storage, easy to expand, O(1) locating al
+3fsd - distribute web file system supporting: mass unlimitted file storage, easy to expand, O(1) location algorithm,
+       non-centralized, can work with stand web server(WebDAV) in proxy mode
+
+More to find in conf file.
 
 OS requirement: CentOS 6.x with python 2.6/2.7, Debian 6/7.
 
