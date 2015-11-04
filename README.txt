@@ -30,7 +30,8 @@ Performance:
   About 80% performance of 3wsd.
   
   3nsd:
-  Fast enough...400 r/s
+  Fast enough...about 2800-3000 queries/s per processes, with 1GHz bcm2709 4-cores ARMv7 cpu testing, better when 
+  multi-processes with reuse_port enabling kernel.
   
   3fsd:
   Same with 3zsd.
