@@ -19,9 +19,19 @@ More to find in .conf file.
 
 Performance:
 
+  3wsd:
   Small file under 1KB single process test(full in-mem), with nginx configuring accept_mutex off, 80% performance.
   Multi process test, with reuse_port enabling kernel, 95% performance of nginx.
   The test is not quite strict， but I just wan to say it's fast enough.
+  
+  3zsd:
+  About 80% performance of 3wsd.
+  
+  3nsd:
+  Fast enough...
+  
+  3fsd:
+  Same with 3zsd.
   
 OS requirement: CentOS 6.x with python 2.6/2.7, Debian 6/7.
 
