@@ -2,7 +2,13 @@
 
 Features in detail:
 
-3wsd - web server support: static files, using mmap&sendfile to send files with in-mem xcache, transparent gzip file transfer with fixed length(small file) & chunked(large file)
+3wsd - web server supporting: static files, using mmap & sendfile to send files with in-mem xcache, 
+       transparent gzip file transfer with fixed length(small file) & chunked(large file)
+3nsd - dns server supporting: only A record resolution, domainname failover(refer to conf file),
+       ip icmp probe & hide when fail, round robbin ip resolving
+3zsd - proxy server supporting: load balance backend servers, in-mem file caching & persistent cache file storage
+
+3fsd - distribute web file system supporting: mass unlimitted file storage, easy to expand, O(1) locating al
 
 OS requirement: CentOS 6.x with python 2.6/2.7, Debian 6/7.
 
