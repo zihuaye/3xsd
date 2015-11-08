@@ -13,7 +13,7 @@ Features in detail:
        persistent cache file storage
 
 3fsd - distribute web file system supporting: mass unlimitted file storage, easy to expand,
-       O(1) location algorithm, non-centralized, can work with standard web server(WebDAV) in proxy mode
+       O(1) location algorithm, non-centralized, can work with stand web server(WebDAV) in proxy mode
        file redundancy, file persistent caching
 
 More to find in .conf file.
@@ -36,6 +36,14 @@ Performance:
   3fsd:
   Same with 3zsd.
   
+  There are at lease two ways to increase the performance of 3xsd:
+  1.Install Cython, and rename _3xsd.py to _3xsd.pyx, run it. 
+    Cython will compile _3xsd.py lib into a _3xsd.so file, using static type declarations.
+    This can gain about 5%-6% performance increasement.
+
+  2.Use PyPy.
+    This can gain about 10%-15% performance increasement(or more).
+
 OS requirement: CentOS 6.x with python 2.6/2.7, Debian 6/7.
 
 Doing this before running the program(minimal requirement):
@@ -62,3 +70,4 @@ To install a module of specific version(like gevent 0.13.8), you can:
 
 This will install the latest version of gevent(pypy will need it):
   pip install git+git://github.com/surfly/gevent.git#egg=gevent
+
