@@ -13,7 +13,7 @@
 # All 3 party modules copyright go to their authors(see their licenses).
 #
 
-__version__ = "0.0.14"
+__version__ = "0.0.15"
 
 import os, sys, io, time, calendar, random, multiprocessing, threading
 import shutil, mmap, sendfile, zlib, gzip, copy
@@ -253,8 +253,12 @@ class _Z_EpollServer(StreamServer):
 		while 1:
 			try:
 				if self.handler.gzip_on and self.gzip_shelf and self.gzip_shelf.cache:
-					while len(self.gzip_shelf.cache) > 1000:
-						self.gzip_shelf.cache.popitem()
+					_over = len(self.gzip_shelf.cache) - 1000
+					_delx = int(_over/8)
+					if _over > 0 and _delx > 9:
+						while _delx > 0:
+							self.gzip_shelf.cache.popitem()
+							_delx -= 1
 			except:
 				pass
 			time.sleep(15)
@@ -270,8 +274,12 @@ class _Z_EpollServer(StreamServer):
 			try:
 				#maintain mem caches & shelfies
 				if self.handler.z_xcache_shelf and self.xcache_shelf and self.xcache_shelf.cache:
-					while len(self.xcache_shelf.cache) > self.handler.z_cache_size:
-						self.xcache_shelf.cache.popitem()
+					_over = len(self.xcache_shelf.cache) - self.handler.z_cache_size
+					_delx = int(_over/8)
+					if _over > 0 and _delx > 9:
+						while _delx > 0:
+							self.xcache_shelf.cache.popitem()
+							_delx -= 1
 
 					if hasattr(self.xcache_shelf.dict, 'sync'):
 						#self.xcache.dict is an anydbm object, mostly gdbm or bsddb
@@ -1057,7 +1065,6 @@ class _xHandler:
 
 				try:
 					if isinstance(self.out_body_file, str):
-						#_sent = self.sock.send(self.out_body_file[sent:_send_buf+sent])
 						_sent = self.sock.send(self.out_body_file[sent:_send_buf+sent])
 					else:
 						_sent = sendfile.sendfile(self.sock.fileno(), self.out_body_file.fileno(),
@@ -1074,7 +1081,6 @@ class _xHandler:
 					else:
 						if self.out_body_size == sent and self.gzip_finished:
 							del self.server.resume[self.sock.fileno()]
-							#self.server.epoll.modify(self.sock.fileno(), select.EPOLLIN|select.EPOLLET)
 							self.server.epoll.modify(self.sock.fileno(), select.EPOLLIN)
 							self.transfer_completed = 1
 						else:
@@ -1083,8 +1089,8 @@ class _xHandler:
 									self.gzip_transfer, self.xcache_key]
 				except OSError as e:
 					if e[0] == errno.EAGAIN:
-					#send buffer full?just wait to resume transfer
-					#and gevent mode can't reach here, beacause gevent_sendfile intercepted the exception
+						#send buffer full?just wait to resume transfer
+						#and gevent mode can't reach here, beacause gevent_sendfile intercepted the exception
 						self.server.resume[self.sock.fileno()] = [self.out_body_file,
 									self.out_body_size, sent, self.keep_connection,
 									self.gzip_transfer, self.xcache_key]
@@ -1869,8 +1875,14 @@ class _xZHandler(_xHandler, _xDNSHandler):
 		else:
 			sent = self.sock.send(self.server.zcache[_f][blockno][begin:])
 			should_sent = len(self.server.zcache[_f][blockno][begin:])
-			self.server.zcache_stat[_f][0] += 1
-			self.server.zcache_stat[_f][1] = 0
+			if sent < should_sent:
+				self.server.zcache_stat[_f][1] += sent
+			else:
+				self.server.zcache_stat[_f][0] += 1
+				self.server.zcache_stat[_f][1] = 0
+
+		#print "sent block:", blockno, sent, len(self.server.zcache[_f][blockno]), self.send_buf_size
+		#print "zcache_stat:", self.server.zcache_stat[_f]
 
 		return False
 
@@ -2050,7 +2062,6 @@ class _xZHandler(_xHandler, _xDNSHandler):
 
 		if self.z_finished == 1:
 			self.server.epoll.unregister(_f)
-
 			return self.PARSE_OK
 		else:
 			return self.PARSE_MORE
