@@ -13,12 +13,19 @@
 # All 3 party modules copyright go to their authors(see their licenses).
 #
 
-import os, sys, pwd, multiprocessing, psutil
+import os, sys, pwd, multiprocessing, psutil, copy
 sys.dont_write_bytecode = True		#do not write .pyc .pyo files, for dev phase
 
-import getopt, setproctitle, _3xsd, gevent
+import getopt, setproctitle, gevent
 from gevent import monkey
 from gevent.pool import Pool
+
+try:
+	import pyximport; pyximport.install()
+except:
+	pass
+
+import _3xsd
 
 if __name__ == "__main__":
 
@@ -178,17 +185,6 @@ if __name__ == "__main__":
 	_3xsd.Homedir = homedir
 	_3xsd.Xcache_shelf = xcache_shelf
 
-	#set process title to identify master, worker, etc.
-	if len(sys.argv) > 1:
-		if custum_home > 0:
-			my_title = my_title_pre + " " + " ".join(sys.argv[1:])
-		else:
-			my_title = my_title_pre + " " + " ".join(sys.argv[1:]) + " -d " + homedir
-	else:
-		my_title = my_title_pre + " -d " + homedir
-	
-	setproctitle.setproctitle(my_title)
-	
 	#init the handler and server instance
 	if i_dns == 1:
 		server_mode = 'i_dns'
@@ -219,12 +215,32 @@ if __name__ == "__main__":
 	_3xsd.Server.reuse_addr = 1
 	_3xsd.Server.pre_start()
 	
-	print program_name, "serving at port:", _3xsd.Port, ", master pid:", os.getpid(), ", max conns:", _3xsd.Conns.size, ", backlog:", _3xsd.Backlog, ", workers:", _3xsd.Workers, ", server_mode:", server_mode, ", handler:", _3xsd.Handler, ", version:", _3xsd.__version__, ", socket:", type(_3xsd.Server.socket)
+	print program_name, "serving at port:", _3xsd.Port, ", master pid:", os.getpid(), ", max conns:", _3xsd.Conns.size, ", backlog:", _3xsd.Backlog, ", workers:", _3xsd.Workers, ", server_mode:", server_mode, ", handler:", _3xsd.Handler, ", version:", _3xsd.__version__, ", socket:", type(_3xsd.Server.socket), ", lib:", _3xsd.__file__
 	
 	if uname is not None:
 		#set specific uid and gid of process
 		os.setgid(pwd.getpwnam(uname).pw_gid)
 		os.setuid(pwd.getpwnam(uname).pw_uid)
+	
+	#set process title to identify master, worker, etc.
+	_homedir = None
+	if server_mode == 'native_epoll' or server_mode == 'gevent_stream':
+		if homedir != _3xsd.Server.handler.homedir:
+			_homedir = copy.copy(homedir)
+			homedir =  _3xsd.Server.handler.homedir
+			os.chdir(homedir)
+
+	if len(sys.argv) > 1:
+		if custum_home > 0:
+			if _homedir:
+				sys.argv[1:].replace(_homedir, homedir)
+			my_title = my_title_pre + " " + " ".join(sys.argv[1:])
+		else:
+			my_title = my_title_pre + " " + " ".join(sys.argv[1:]) + " -d " + homedir
+	else:
+		my_title = my_title_pre + " -d " + homedir
+	
+	setproctitle.setproctitle(my_title)
 	
 	#chose to running in single process mode or multi-worker mode
 	if _3xsd.Workers == 0:
@@ -234,7 +250,7 @@ if __name__ == "__main__":
 		elif z_lbs:
 			_3xsd.Server.serve_lbs()
 		elif x_dfs:
-			_3xsd.Server.serve_dfs()
+			_3xsd.Server.serve_lbs()
 		else:
 			_3xsd.Server.serve_forever()
 	
@@ -290,7 +306,7 @@ if __name__ == "__main__":
 		elif z_lbs:
 			_3xsd.Server.serve_lbs()
 		elif x_dfs:
-			_3xsd.Server.serve_dfs()
+			_3xsd.Server.serve_lbs()
 		else:
 			_3xsd.Server.serve_forever()
 	else:
