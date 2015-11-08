@@ -13,10 +13,10 @@
 # All 3 party modules copyright go to their authors(see their licenses).
 #
 
-__version__ = "0.0.13"
+__version__ = "0.0.14"
 
-import os, sys, io, time, calendar, random, multiprocessing
-import shutil, mmap, sendfile, zlib, gzip, cStringIO, copy
+import os, sys, io, time, calendar, random, multiprocessing, threading
+import shutil, mmap, sendfile, zlib, gzip, copy
 import _socket as socket
 import select, errno, gevent, dpkt, ConfigParser, hashlib, struct, shelve
 from datetime import datetime
@@ -24,15 +24,15 @@ from gevent.server import StreamServer
 from gevent.coros import Semaphore
 from distutils.version import StrictVersion
 
-Port = 8000     #Listening port number
-Backlog = 1000  #Listening backlog
-Conns = None    #gevent.pool type, connection limit
-Workers = 0     #workers to fork, 0 for no worker
-Homedir = None  #3xsd working home(document root)
-Handler = None  #3xsd handler name, not an instance
-Server = None   #3xsd server instance, init at startup
+Port = 8000	#Listening port number
+Backlog = 1000	#Listening backlog
+Conns = None	#gevent.pool type, connection limit
+Workers = 0	#workers to fork, 0 for no worker
+Homedir = None	#3xsd working home(document root)
+Handler = None	#3xsd handler name, not an instance
+Server = None	#3xsd server instance, init at startup
 Xcache_shelf = 0#persistent storage of xcache(3zsd&3fsd)
-_Name = '3xsd'  #program name, changes at startup
+_Name = '3xsd'	#program name, changes at startup
 
 o_socket = socket
 o_sendfile = sendfile.sendfile
@@ -178,7 +178,7 @@ class _Z_EpollServer(StreamServer):
 	
 	def cleanz(self, fd):
 		try:
-                	self.epoll.unregister(fd)
+			self.epoll.unregister(fd)
 		except IOError as e:
 			pass
 
@@ -190,13 +190,14 @@ class _Z_EpollServer(StreamServer):
 
 			self.keep_connection = 0
 
-                	#self.zconns[fd].close()  #will be closed by clean()
-                	self.zconns.pop(fd, None)
-                	self.zconns_stat.pop(fd, None)
-                	self.zaddrs.pop(fd, None)
-                	self.z_reqs.pop(fd, None)
-                	self.z_reqs_cnt.pop(fd, None)
-                	self.z_reqs_stat.pop(fd, None)
+			#self.zconns[fd].close()  #will be closed by clean()
+			self.cb_conns.pop(fd, None)
+			self.zconns.pop(fd, None)
+			self.zconns_stat.pop(fd, None)
+			self.zaddrs.pop(fd, None)
+			self.z_reqs.pop(fd, None)
+			self.z_reqs_cnt.pop(fd, None)
+			self.z_reqs_stat.pop(fd, None)
 			self.zhosts.pop(fd, None)
 			self.zcache.pop(fd, None)
 			self.zcache_stat.pop(fd, None)
@@ -205,9 +206,14 @@ class _Z_EpollServer(StreamServer):
 		except:
 			pass
 
+	def clean_zidles(self, fd):
+		for _host, _idle_list in self.zidles.iteritems():
+			if fd in _idle_list:
+				self.zidles[_host].remove(fd)
+
 	def cleanc(self, fd):
 		try:
-                	self.epoll.unregister(fd)
+			self.epoll.unregister(fd)
 		except IOError as e:
 			pass
 
@@ -243,6 +249,59 @@ class _Z_EpollServer(StreamServer):
 		elif o == "z_resp_header":
 			print self.z_resp_header
 
+	def check_3ws(self):
+		while 1:
+			try:
+				if self.handler.gzip_on and self.gzip_shelf and self.gzip_shelf.cache:
+					while len(self.gzip_shelf.cache) > 1000:
+						self.gzip_shelf.cache.popitem()
+			except:
+				pass
+			time.sleep(15)
+
+	def get_tcp_stat(self, sock):
+		_fmt = "B"*7+"I"*21
+		_x = struct.unpack(_fmt, sock.getsockopt(socket.IPPROTO_TCP, socket.TCP_INFO, 92))
+		return _x[0]
+
+
+	def check_lbs(self):
+		while 1:
+			try:
+				#maintain mem caches & shelfies
+				if self.handler.z_xcache_shelf and self.xcache_shelf and self.xcache_shelf.cache:
+					while len(self.xcache_shelf.cache) > self.handler.z_cache_size:
+						self.xcache_shelf.cache.popitem()
+
+					if hasattr(self.xcache_shelf.dict, 'sync'):
+						#self.xcache.dict is an anydbm object, mostly gdbm or bsddb
+						self.xcache_shelf.dict.sync()
+
+				#maintain backend conns
+				#print "------------------------------------------"
+				#print "conns:", self.conns
+				#print "zconns:", self.zconns
+				#print "cb_conns:", self.cb_conns
+				#print "zidles:", self.zidles
+				_keys = self.zconns.keys()
+				if _keys:
+					for _f in _keys:
+						if self.get_tcp_stat(self.zconns[_f]) != 1:
+							#connection not in ESTABLISHED stat, being closed
+							self.clean_zidles(_f)
+							self.cleanz(_f)
+
+				_keys = self.conns.keys()
+				if _keys:
+					for _f in _keys:
+						if self.conns[_f].fileno() == -1:
+							#client connection being closed
+							self.conns.pop(_f)
+							self.cb_conns.pop(_f)
+			except:
+				raise
+			time.sleep(15)
+
 	def handle_event(self, events):
 		for f, ev in events:
 			if f == self.socket.fileno():
@@ -253,6 +312,7 @@ class _Z_EpollServer(StreamServer):
 				except:
 					continue
 				c = conn.fileno()
+				conn.setblocking(0)
 				#self.epoll.register(c, select.EPOLLIN | select.EPOLLET)
 				self.epoll.register(c, select.EPOLLIN)
 				self.conns[c] = conn
@@ -303,10 +363,10 @@ class _Z_EpollServer(StreamServer):
 		self.epoll.register(self.socket.fileno(), select.EPOLLIN | select.EPOLLET)
 
 		try:
-			gevent.spawn(self.handler.probe_ips)  	#a separate greenlet to perform ip stat checking
+			gevent.spawn(self.handler.probe_ips)	#a separate greenlet to perform ip stat checking
 			while 1:
 				gevent.sleep(1e-20)		#a smallest float, works both at v0.13.8 and v1.0.x
-				_events = self.epoll.poll(10)   #long-timeout helping cpu% lower
+				_events = self.epoll.poll(10)	#long-timeout helping cpu% lower
 				if len(_events) > 0:
 					self.handler(_events)
 		finally:
@@ -319,25 +379,10 @@ class _Z_EpollServer(StreamServer):
 		self.epoll.register(self.socket.fileno(), select.EPOLLIN)
 
 		try:
-			#gevent.spawn(self.handler.check_zconns)  #a separate greenlet to perform zconn checking
-			while 1:
-				#gevent.sleep(1e-20)
-				#self.handle_event(self.epoll.poll(10))
-				self.handle_event(self.epoll.poll())
-		finally:
-			self.cleanupall()
-			self.socket.close()		
+			t = threading.Timer(15, self.check_lbs)
+			t.start()
 
-	def serve_dfs(self):
-		self.if_reinit_socket()
-		self.epoll = select.epoll()
-		self.epoll.register(self.socket.fileno(), select.EPOLLIN)
-
-		try:
-			#gevent.spawn(self.handler.check_dfs)  #a separate greenlet to perform dfs checking
 			while 1:
-				#gevent.sleep(1e-20)
-				#self.handle_event(self.epoll.poll(10))
 				self.handle_event(self.epoll.poll())
 		finally:
 			self.cleanupall()
@@ -380,7 +425,7 @@ class _xHandler:
 	weekdayname = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 	
 	monthname = [None, 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-	         	'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+			'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 	index_files = ["index.html", "index.htm"]
 
@@ -395,9 +440,9 @@ class _xHandler:
 	
 	_r = b''  #request headers
 	
-	xcache_ttl = 5  	#normally, 5-10 seconds internal cache time of items
-	xcache_size = 1000000   #1 million items, about 1/3GB(333MB) mem used
-	x_shelf_size = 1000000  #1 million items in disk, about 30GB disk size with average item size 30KB
+	xcache_ttl = 5		#normally, 5-10 seconds internal cache time of items
+	xcache_size = 1000000	#1 million items, about 1/3GB(333MB) mem used
+	x_shelf_size = 1000000	#1 million items in disk, about 30GB disk size with average item size 30KB
 
 	gzip_on = False
 	gzip_size = 1000	 #default >1KB file size can be gzipped
@@ -438,44 +483,44 @@ class _xHandler:
 	def init_config(self):
 		if not self.web_config_parsed:
 			try:
-                		self.web_config = ConfigParser.ConfigParser()
-                		if not self.web_config.read('3xsd.conf'):
+				self.web_config = ConfigParser.ConfigParser()
+				if not self.web_config.read('3xsd.conf'):
 					self.web_config.read('/etc/3xsd.conf')
 
 				for name, value in self.web_config.items('3wsd'):
-                                	if name == 'root':
+					if name == 'root':
 						if value:
 							self.homedir = value
-                                	elif name == 'index':
+					elif name == 'index':
 						self.index_files = []
 						for item in value.split(','):
 							if item:
 								self.index_files.append(item)
 						if not self.index_files:
 							self.index_files = ["index.html", "index.htm"]
-                                	elif name == 'mime_types':
+					elif name == 'mime_types':
 						for item in value.split(','):
 							if item:
 								k, v = item.split(':', 1)
 								if k and v:
 									self.mimetype[k] = v
-                                	elif name == 'gzip':
+					elif name == 'gzip':
 						if value.lower() == "on":
 							self.gzip_on = True
-							self.server.gzip_shelf = shelve.open('gzip.shelf', writeback=True)
-                                	elif name == 'gzip_size':
+							self.server.gzip_shelf = shelve.open('shelf.gzip', writeback=True)
+					elif name == 'gzip_size':
 						if value[-1] in ['k','m','g','K','M','G']:
 							_multip = self.multip[value[-1]]
 							self.gzip_size = int(value[:-1])*_multip
 						else:
 							self.gzip_size = int(value)
-                                	elif name == 'gzip_max_size':
+					elif name == 'gzip_max_size':
 						if value[-1] in ['k','m','g','K','M','G']:
 							_multip = self.multip[value[-1]]
 							self.gzip_max_size = int(value[:-1])*_multip
 						else:
 							self.gzip_max_size = int(value)
-                                	elif name == 'gzip_types':
+					elif name == 'gzip_types':
 						for item in value.split(','):
 							if item:
 								if item not in self.gzip_types:
@@ -500,7 +545,7 @@ class _xHandler:
 		#self.vhost_mode = False
 		self.transfer_completed = 1
 
-		self.command = self.path = self.resp_line = self.resp_msg = self.out_head_s = self._r = self.hostname = self.xcache_key = b''
+		self.command = self.path = self.resp_line = self.resp_msg = self.out_head_s = self._r = self._rb = self.hostname = self.xcache_key = b''
 		self.c_http_ver = self.s_http_ver = self.r_http_ver = 1
 		
 		self.resp_code = self.HTTP_OK
@@ -627,6 +672,8 @@ class _xHandler:
 		#get the request headers
 		_doing_pipelining = _last_pipelining = False
 
+		_eol_pos = -1
+
 		if self.sock.fileno() not in self.server.x_reqs:
 			r = self._r
 			_xreqs_empty = True
@@ -652,9 +699,14 @@ class _xHandler:
 						#peer closed connection?
 						return self.PARSE_ERROR
 
-				if self.EOL2 in r: 
+				_eol_pos = r.find(self.EOL2)
+				if _eol_pos > -1: 
 					#headers mostly end with EOL2 "\n\r\n"
-					if self.server_pipelining:
+					if not self.server_pipelining:
+						if not _xreqs_empty:
+							#a big-headers request is all recieved
+							self.server.x_reqs.pop(self.sock.fileno())
+					else:
 						#for http pipelining
 						if r.count(self.EOL2) > 1: 
 							c = r.split(self.EOL2, 1)
@@ -663,16 +715,12 @@ class _xHandler:
 						else:
 							self.server.x_reqs[self.sock.fileno()] = [r, 1]
 							_last_pipelining = True
-					else:
-						if not _xreqs_empty:
-							#a big-headers request is all recieved
-							self.server.x_reqs.pop(self.sock.fileno())
 					break
 				else:
 					#not finished all headers, save recv data
 					self.server.x_reqs[self.sock.fileno()] = [r, 0]
 					return self.PARSE_AGAIN
-				self.sock.setblocking(0)
+				#self.sock.setblocking(0)
 			except socket.error as e:
 				if e.errno == errno.EAGAIN:
 					#no more request data, see if the whole request headers should be recieved
@@ -686,11 +734,16 @@ class _xHandler:
 					#peer closed connection?
 					return self.PARSE_ERROR
 
-		a = r.strip().split("\r\n", 1)
+		#a = r.split("\r\n", 1)
+		a = r[:_eol_pos].splitlines()
 
-		if not a[0]:
+		#if not a[0]:
+		if len(a) < 2:
 			#illeagal request headers
 			return self.PARSE_ERROR
+
+		if _eol_pos  < len(r) - len(self.EOL2):
+			self._rb = r[_eol_pos+len(self.EOL2):]	 #request body, may be PUT method
 
 		#"GET / HTTP/1.1"
 		self.command, self.path, _c_http_ver = a[0].split()
@@ -706,8 +759,20 @@ class _xHandler:
 		else:
 			return self.PARSE_ERROR
 
+		"""
 		#all headers go to dict
-		self.in_headers = dict((k, v) for k, v in (item.split(": ") for item in a[1].split("\r\n")))
+		if self.cmd_put == 0:
+			self.in_headers = dict((k, v) for k, v in (item.split(": ") for item in a[1].strip().split("\r\n")))
+		else:
+			self.in_headers = dict((k, v) for k, v in (item.split(": ") for item in a[1].split(self.EOL2, 1)[0].split("\r\n")))
+		"""
+
+		for _line in a[1:]:
+			_pos = _line.find(": ")
+			if _pos > 0:
+				self.in_headers[_line[:_pos]] = _line[_pos+2:]
+			else:
+				continue
 
 		self.check_connection(_c_http_ver)
 
@@ -759,7 +824,7 @@ class _xHandler:
 				if isinstance(self._c[2], file) and not self._c[2].closed:  #close the file opened, if not closed
 					self._c[2].close()
 
-				if self._c[5]:  #close the mmap maped, if exists
+				if self._c[5]:	#close the mmap maped, if exists
 					self._c[5].close()
 
 				self._c = None
@@ -847,7 +912,7 @@ class _xHandler:
 			else:
 				self.sock.send(''.join([self.out_head_s, "Connection: close\n\n"]))
 
-	def x_response(self):  #xxx
+	def x_response(self):
 		if self.resume_transfer == 0:
 			sent = _sent = 0
 		elif self.resume_transfer == 1:
@@ -927,9 +992,10 @@ class _xHandler:
 								else:
 									_out_headers["Content-Length"] = len(_ss)
 								_out_head_s = ''.join([self.resp_line, "\nServer: ", self.server_version, "\nDate: ", self.date_time_string(_t), '\n', '\n'.join(['%s: %s' % (k, v) for k, v in _out_headers.items()]), '\n'])
+								#moved to self.server.check_3ws()
 								#keep the mem cache of gzip_shelf limitted
-								while len(self.server.gzip_shelf.cache) > 1000:
-									self.server.gzip_shelf.cache.popitem()
+								#while len(self.server.gzip_shelf.cache) > 1000:
+								#	self.server.gzip_shelf.cache.popitem()
 
 								#keep the disk cache of gzip_shelf limitted
 								if len(self.server.gzip_shelf) > self.x_shelf_size:
@@ -1019,8 +1085,8 @@ class _xHandler:
 					if e[0] == errno.EAGAIN:
 					#send buffer full?just wait to resume transfer
 					#and gevent mode can't reach here, beacause gevent_sendfile intercepted the exception
-						 self.server.resume[self.sock.fileno()] = [self.out_body_file,
-                                                                        self.out_body_size, sent, self.keep_connection,
+						self.server.resume[self.sock.fileno()] = [self.out_body_file,
+									self.out_body_size, sent, self.keep_connection,
 									self.gzip_transfer, self.xcache_key]
 
 				if not self.gzip_finished:
@@ -1060,8 +1126,8 @@ class _xHandler:
 
 				#Now, transfer complete, resume nature behavior of TCP/IP stack, as turned before
 				if self.keep_connection == 1 and self.resume_transfer == 0:
-				    	#no need to set TCP_CORK when keep_connection=0
-				    	#it will be cleared when socket closing and data will be flushed
+					#no need to set TCP_CORK when keep_connection=0
+					#it will be cleared when socket closing and data will be flushed
 					self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 0)
 		elif self.resp_code == self.HTTP_NOT_MODIFIED:
 			self.send_out_all_headers()
@@ -1078,18 +1144,18 @@ class _xHandler:
 			self.sock.close()
 
 def gevent_sendfile(out_fd, in_fd, offset, count):
-    #This function is borrowed from gevent's example code, thanks!
-    sent = 0
-    while sent < count:
-        try:
-            _sent = o_sendfile(out_fd, in_fd, offset + sent, count - sent)
-            sent += _sent
-        except OSError as ex:
-            if ex.args[0] == errno.EAGAIN:
-                gevent.socket.wait_write(out_fd)
-            else:
-                raise
-    return sent
+	#This function is borrowed from gevent's example code, thanks!
+	sent = 0
+	while sent < count:
+		try:
+			_sent = o_sendfile(out_fd, in_fd, offset + sent, count - sent)
+			sent += _sent
+		except OSError as ex:
+			if ex.args[0] == errno.EAGAIN:
+				gevent.socket.wait_write(out_fd)
+			else:
+				raise
+	return sent
 
 class _xDNSHandler:
 	PARSE_OK = 0
@@ -1139,7 +1205,7 @@ class _xDNSHandler:
 
 	def ip_list(self, name, ipstr, config_section):
 		#ip,ip,ip... can be the following format:   lll
-		#10.23.4.11  -  single ip, 10.23.4.101-200  -  multi ip
+		#10.23.4.11  -	single ip, 10.23.4.101-200  -  multi ip
 		a = ipstr.split(',')
 		iplist = []
 		t = time.time()
@@ -1270,7 +1336,7 @@ class _xDNSHandler:
 				if self.rra.get(_query_name) is None:
 					break  #backup go down too, just break and return empty answer
 				self._rra = self.shift(self.rra.get(_query_name), self.rrn.get(_query_name))
-                		self.rrn[_query_name] += 1
+				self.rrn[_query_name] += 1
 				self._ttl = self.ttl.get(_query_name)
 
 		self.answer = str(self.q)
@@ -1279,7 +1345,7 @@ class _xDNSHandler:
 		self.server.xcache[self.query_name] = [self.xcache_ttl + time.time(), self.answer]
 
 	def x_send_out(self):
-	  	#self._wlock.acquire()
+		#self._wlock.acquire()
 		try:
 			#send out answer, seems sending without mutex lock is ok
 			self.sock.sendto(self.answer, self.addr)
@@ -1343,11 +1409,11 @@ class _xZHandler(_xHandler, _xDNSHandler):
 
 	_f = None #socket fileno
 
-	z_cache_size = 1000  	#limit the xcache size in mem, about 30MB size with average file size 30KB
-	z_idle_ttl = 20  	#backend connections have a idle timeout of 20 seconds
+	z_cache_size = 1000	#limit the xcache size in mem, about 30MB size with average file size 30KB
+	z_idle_ttl = 20		#backend connections have a idle timeout of 20 seconds
 
-	z_xcache_shelf = False  #persistent storage of xcache
-	z_shelf_size = 1000000  #1 million files on-disk cache, about 30GB disk size with average file size 30KB
+	z_xcache_shelf = False	#persistent storage of xcache
+	z_shelf_size = 1000000	#1 million files on-disk cache, about 30GB disk size with average file size 30KB
 
 	def __init__(self, conn, client_address, server, native_epoll=True,
 					gevent_stream=False, recv_buf_size=16384, send_buf_size=65536, z_mode=0):
@@ -1361,7 +1427,7 @@ class _xZHandler(_xHandler, _xDNSHandler):
 
 		if Xcache_shelf == 1:
 			self.z_xcache_shelf = True
-			self.server.xcache_shelf = shelve.open('xcache.shelf', writeback=True)
+			self.server.xcache_shelf = shelve.open('shelf.xcache', writeback=True)
 
 	def init_handler(self, conn, client_address, rw_mode=0):
 		_xHandler.init_handler(self, conn, client_address, rw_mode)
@@ -1386,12 +1452,12 @@ class _xZHandler(_xHandler, _xDNSHandler):
 
 				if rw_mode > 1:
 					self.z_host_sock = self.server.zconns.get(self._f)
-                        		self.z_host_addr = self.server.zaddrs.get(self._f)
+					self.z_host_addr = self.server.zaddrs.get(self._f)
 		else:
 			return
 
 	def z_check_xcache(self, _f):
-                if self.if_modified_since == 0:
+		if self.if_modified_since == 0:
 
 			_key_found = False
 			_in_shelf = False
@@ -1411,38 +1477,38 @@ class _xZHandler(_xHandler, _xDNSHandler):
 						break
 			if not _key_found:
 				if self.xcache_key in self.server.xcache:
-					 _key_found = True
+					_key_found = True
 				elif self.z_xcache_shelf and self.xcache_key in self.server.xcache_shelf:
-					 _key_found = True
-					 _in_shelf = True
+					_key_found = True
+					_in_shelf = True
 
 			if _key_found:
 				if not _in_shelf:
-                        		self._c = self.server.xcache.get(self.xcache_key)
+					self._c = self.server.xcache.get(self.xcache_key)
 				else:
-                        		self._c = self.server.xcache[self.xcache_key] = self.server.xcache_shelf.get(self.xcache_key)
-                        	ttl = self._c[0]
-                        	if ttl >= time.time():
-                                	#cache hit
-                                	self.out_head_s, self.out_body_file, self.out_body_size, self.out_body_file_lmt, self.out_body_mmap = self._c[1:]
-                                	self.has_resp_body = True
-                                	self.xcache_hit = True
+					self._c = self.server.xcache[self.xcache_key] = self.server.xcache_shelf.get(self.xcache_key)
+				ttl = self._c[0]
+				if ttl >= time.time():
+					#cache hit
+					self.out_head_s, self.out_body_file, self.out_body_size, self.out_body_file_lmt, self.out_body_mmap = self._c[1:]
+					self.has_resp_body = True
+					self.xcache_hit = True
 					self.server.xcache_stat[_f] = self.xcache_key
-                                	return
-                        	else:
-                                	#cache item expired
-                                	self._c = None
+					return
+				else:
+					#cache item expired
+					self._c = None
 					if not _in_shelf:
-                                		self.server.xcache.pop(self.xcache_key)
+						self.server.xcache.pop(self.xcache_key)
 					else:
 						try:
-                                			del self.server.xcache_shelf[self.xcache_key]
+							del self.server.xcache_shelf[self.xcache_key]
 						except:
 							#may be problem in concurrent mode
 							pass
 
 					if _f in self.server.xcache_stat:
-                                		self.server.xcache_stat.pop(_f)
+						self.server.xcache_stat.pop(_f)
 
 			self.xcache_hit =False
 		else:
@@ -1457,8 +1523,8 @@ class _xZHandler(_xHandler, _xDNSHandler):
 				#from client, resume_transfer = 0
 				#print "0 c->s"   #client to server
 				self.init_handler(self.server.conns[f], self.server.addrs[f], rw_mode)
-                                parse_stat = self.x_parse()
-                                if parse_stat == self.PARSE_OK:
+				parse_stat = self.x_parse()
+				if parse_stat == self.PARSE_OK:
 					self.server.k_conns[f] = [self.r_http_ver, self.keep_connection]
 					self.server.c_path[f] = self.path
 					if self.cmd_get == 1 or self.cmd_head == 1:
@@ -1476,11 +1542,11 @@ class _xZHandler(_xHandler, _xDNSHandler):
 							self.xResult = self.xR_ERR_HANDLE
 					else:
 						self.xResult = self.xR_ERR_HANDLE
-                                elif parse_stat == self.PARSE_AGAIN:
-                                        self.xResult = self.xR_PARSE_AGAIN
-                                        continue
-                                else:
-                                        self.xResult = self.xR_ERR_PARSE
+				elif parse_stat == self.PARSE_AGAIN:
+					self.xResult = self.xR_PARSE_AGAIN
+					continue
+				else:
+					self.xResult = self.xR_ERR_PARSE
 					#client may closed connection, clean cb_conns
 					self.server.cleanc(self._f)
 			elif rw_mode == 1:
@@ -1494,7 +1560,7 @@ class _xZHandler(_xHandler, _xDNSHandler):
 					if _cb:
 						_z_sock, _f = _cb
 					else:
-						 _z_sock, _f = self.None2
+						_z_sock, _f = self.None2
 
 					if _z_sock:
 						#print "xcache_hit clean cb_conns pair:", f, _f
@@ -1511,7 +1577,7 @@ class _xZHandler(_xHandler, _xDNSHandler):
 							else:
 								self.server.zidles[str(self.server.zaddrs[_f])] = [_f]
 
-							self.server.zconns_stat[_f] = [0, time.time()]  #conn idle
+							self.server.zconns_stat[_f] = [0, time.time()]	#conn idle
 
 							#clean zcache
 							self.server.zcache.pop(_f, None)
@@ -1573,7 +1639,7 @@ class _xZHandler(_xHandler, _xDNSHandler):
 	def z_pick_a_backend(self):
 		if self.z_mode == self.Z_RR:
 			self.z_backends = self.shift(self.rra.get(self.z_hostname), self.rrn.get(self.z_hostname))
-                	self.rrn[self.z_hostname] = (self.rrn[self.z_hostname] + 1) % len(self.rra.get(self.z_hostname))
+			self.rrn[self.z_hostname] = (self.rrn[self.z_hostname] + 1) % len(self.rra.get(self.z_hostname))
 			return self.z_backends[0]
 		elif self.z_mode == self.Z_IP:
 			pass
@@ -1777,7 +1843,7 @@ class _xZHandler(_xHandler, _xDNSHandler):
 						else:
 							self.server.zidles[str(self.server.zaddrs[_f])] = [_f]
 
-						self.server.zconns_stat[_f] = [0, time.time()]  #conn idle
+						self.server.zconns_stat[_f] = [0, time.time()]	#conn idle
 
 				#clean zcache
 				self.server.zcache.pop(_f)
@@ -1846,10 +1912,10 @@ class _xZHandler(_xHandler, _xDNSHandler):
 			if len(self.server.xcache) > self.z_cache_size:
 				self.server.xcache.popitem()
 
-                	if self.r_http_ver == self.HTTP11:
-                        	_resp_line = "HTTP/1.1 200 OK"
-                	else:
-                        	_resp_line = "HTTP/1.0 200 OK"
+			if self.r_http_ver == self.HTTP11:
+				_resp_line = "HTTP/1.1 200 OK"
+			else:
+				_resp_line = "HTTP/1.0 200 OK"
 
 			try:
 				self.server.z_resp_header[_f].pop("Connection")
@@ -1886,13 +1952,15 @@ class _xZHandler(_xHandler, _xDNSHandler):
 					pass
 
 				try:
-					while len(self.server.xcache_shelf.cache) > self.z_cache_size:
-						self.server.xcache_shelf.cache.popitem()
+					#moved to self.server.check_lbs
+					#while len(self.server.xcache_shelf.cache) > self.z_cache_size:
+					#	self.server.xcache_shelf.cache.popitem()
 
 					self.server.xcache_shelf[_xcache_key] = self.server.xcache[_xcache_key]
-					if hasattr(self.server.xcache_shelf.dict, 'sync'):
-						#self.server.xcache.dict is an anydbm object, mostly gdbm
-						self.server.xcache_shelf.dict.sync()
+					#moved to self.server.check_lbs
+					#if hasattr(self.server.xcache_shelf.dict, 'sync'):
+					#	#self.server.xcache.dict is an anydbm object, mostly gdbm
+					#	self.server.xcache_shelf.dict.sync()
 				except:
 					#may be problem in concurrent mode
 					pass
@@ -1976,7 +2044,7 @@ class _xZHandler(_xHandler, _xDNSHandler):
 				self.server.epoll.modify(_c_sock, select.EPOLLIN | select.EPOLLOUT)
 			#else:
 				#at this point, the last request of client should completed and cb_conns cleaned
-                                #may be safe to ignore it, but if this request is different from the last? ....
+				#may be safe to ignore it, but if this request is different from the last? ....
 				#print "cb_conns:", self.server.cb_conns
 				#print "f:", _f, "zcache_stat:", self.server.zcache_stat, "z_reqs_cnt:", self.server.z_reqs_cnt
 
@@ -2140,8 +2208,8 @@ class _xDFSHandler(_xZHandler):
 
 	def init_dfs_config(self):
 		try:
-                	self.dfs_config = ConfigParser.ConfigParser()
-                	if not self.dfs_config.read('3xsd.conf'):
+			self.dfs_config = ConfigParser.ConfigParser()
+			if not self.dfs_config.read('3xsd.conf'):
 				self.dfs_config.read('/etc/3xsd.conf')
 
 			for name, value in self.dfs_config.items('3fsd'):
@@ -2163,7 +2231,7 @@ class _xDFSHandler(_xZHandler):
 				else:
 					#must be a pool config of a domain_name
 					#3xsd.net = 0,10.37.10.1-2:80,10.38.10.2:80;1,10.41.0.1-2:8000
-                	               	self.ttl[name] = self.rrn[name] = 0
+					self.ttl[name] = self.rrn[name] = 0
 					self.rra[name] = []
 					self.dfs_pool[name] = {}
 					self.dfs_pool_count[name] = {}
@@ -2301,10 +2369,10 @@ class _xDFSHandler(_xZHandler):
 					self.z_host_addr = self.z_parse_address(_b)
 					self.z_host_sock = None
 					if _b_index == 0:
-						self.z_connect_backend()
+						self.z_connect_backend(addr=self.z_host_addr)
 						self.z_send_request_init()
 					else:
-						self.z_connect_backend(addr=self.z_host_addr, update_cb_conn=False)
+						self.z_connect_backend(addr=self.z_host_addr, update_cb_conns=False)
 						self.z_send_request_init(no_recv=True)
 					_b_index += 1
 			else:
@@ -2312,3 +2380,4 @@ class _xDFSHandler(_xZHandler):
 
 		except:
 			self.xResult = self.xR_ERR_HANDLE
+			raise
