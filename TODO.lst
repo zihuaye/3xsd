@@ -2,3 +2,4 @@
 2. 3zsd xcache persistent storage(shelve) (done)
 3. 3wsd on-the-fly gzip cache(shelve) (done)
 4. Independent thread to maintain mem cache, shelf, connections, ... (just done, optimizing)
+5. 3wsd PUT/DELETE method (done)
