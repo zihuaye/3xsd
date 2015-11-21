@@ -2,9 +2,9 @@ from setuptools import setup
 
 setup(
 	name='3xsd',
-	version='0.0.15',
+	version='0.0.16',
 
-	description='3xsd is a native epoll server serving TCP/UDP connections, a high performance static web server, a failover dns server, a http-based distributed file server(implementing), and a load-balance proxy-cache server.',
+	description='3xsd is a native epoll server serving TCP/UDP connections, a high performance static web server, a failover dns server, a http-based distributed file server, and a load-balance proxy-cache server.',
 
 	url='https://github.com/zihuaye/3xsd',
 
