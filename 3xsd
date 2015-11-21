@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
 # 3xsd is a native epoll server serving TCP/UDP connections, a high performance static web server, a failover dns server,
-# a http-based distributed file server(implementing), and a load-balance proxy-cache server.
+# a http-based distributed file server, and a load-balance proxy-cache server.
 #
 # The xHandler to handle web requests, and the xDNSHandler to handle DNS query.
 # The xZHandler to handle proxy(load-balance/cache)requests, and the xDFSHandler to handle DFS requests.
@@ -43,11 +43,12 @@ if __name__ == "__main__":
 	z_lbs = 0
 	uname = None
 	xcache_shelf = 0
+	z_mode = 0
 
 	cpu_count = multiprocessing.cpu_count()
 	cpu_affinity = 0
 
-	opts, args = getopt.getopt(sys.argv[1:], "vafhilmngrswzp:c:b:k:d:u:")
+	opts, args = getopt.getopt(sys.argv[1:], "vafhilmngrswzp:c:b:k:d:u:x:")
 	
 	for o, a in opts:
 		if o == "-p":
@@ -96,6 +97,10 @@ if __name__ == "__main__":
 			cpu_affinity = 1
 		elif o == "-l":
 			xcache_shelf = 1
+		elif o == "-x":
+			z_mode = int(a)
+			if z_mode > 2:
+				z_mode = 0
 		elif o == "-v":
 			print "version:", _3xsd.__version__
 			sys.exit()
@@ -120,6 +125,7 @@ if __name__ == "__main__":
 			print("-s : single process, no worker(default)")
 			print("-v : show version")
 			print("-w : web mode(3wsd, a simple web server, default)")
+			print("-x : z_mode(0 - RR(default), 1 - IP Hash, 2 - URL Hash, 3zsd options to choose backend)")
 			print("-z : accelerating mode(3zsd, a reverse proxy server with load balancing support)")
 			sys.exit()
 	
@@ -169,6 +175,7 @@ if __name__ == "__main__":
 		program_name = '3fsd'
 	elif z_lbs == 1:
 		program_name = '3zsd'
+		_3xsd.Z_mode = z_mode
 	else:
 		program_name = '3wsd'
 	
@@ -183,7 +190,7 @@ if __name__ == "__main__":
 		my_title_pre = "%s" % program_name
 	
 	_3xsd.Homedir = homedir
-	_3xsd.Xcache_shelf = xcache_shelf
+	_3xsd.X_shelf = xcache_shelf
 
 	#init the handler and server instance
 	if i_dns == 1:
