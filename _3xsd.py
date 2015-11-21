@@ -13,7 +13,7 @@
 # All 3 party modules copyright go to their authors(see their licenses).
 #
 
-__version__ = "0.0.15"
+__version__ = "0.0.16"
 
 import os, sys, io, time, calendar, random, multiprocessing, threading
 import shutil, mmap, sendfile, zlib, gzip, copy
@@ -31,7 +31,8 @@ Workers = 0	#workers to fork, 0 for no worker
 Homedir = None	#3xsd working home(document root)
 Handler = None	#3xsd handler name, not an instance
 Server = None	#3xsd server instance, init at startup
-Xcache_shelf = 0#persistent storage of xcache(3zsd&3fsd)
+X_shelf = 0	#persistent storage of xcache(3zsd&3fsd)
+Z_mode = 0	#0 - RR(default), 1 - IP Hash, 2 - URL Hash, for 3zsd
 _Name = '3xsd'	#program name, changes at startup
 
 o_socket = socket
@@ -170,11 +171,17 @@ class _Z_EpollServer(StreamServer):
 		self.x_reqs.clear()
 	
 	def cleanup(self, fd):
-		self.epoll.unregister(fd)
-		self.conns[fd].close()
-		self.conns.pop(fd)
-		self.addrs.pop(fd)
-		self.x_reqs.pop(fd)
+		try:
+			self.epoll.unregister(fd)
+			self.conns[fd].close()
+		except:
+			pass
+		try:
+			self.conns.pop(fd)
+			self.addrs.pop(fd)
+			self.x_reqs.pop(fd)
+		except:
+			pass
 	
 	def cleanz(self, fd):
 		try:
@@ -294,7 +301,7 @@ class _Z_EpollServer(StreamServer):
 				_keys = self.zconns.keys()
 				if _keys:
 					for _f in _keys:
-						if self.get_tcp_stat(self.zconns[_f]) != 1:
+						if self.zconns[_f].fileno() == -1 or self.get_tcp_stat(self.zconns[_f]) != 1:
 							#connection not in ESTABLISHED stat, being closed
 							self.clean_zidles(_f)
 							self.cleanz(_f)
@@ -427,6 +434,7 @@ class _xHandler:
 	xR_ERR_HANDLE = -2
 	xR_ERR_403 = -3
 	xR_ERR_404 = -4
+	xR_ERR_5xx = -5
 	
 	xResult = 0
 
@@ -457,6 +465,8 @@ class _xHandler:
 	gzip_max_size = 10000000 #default <=10MB file size can be gzipped
 
 	multip = {'k':1000, 'K':1000, 'm':1000000, 'M':1000000, 'g':1000000000,'G':1000000000}
+
+	writers = []
 
 	def __init__(self, conn, client_address, server, native_epoll=True,
 				gevent_stream=False, recv_buf_size=16384, send_buf_size=65536, pipelining=False):
@@ -536,17 +546,33 @@ class _xHandler:
 										self.gzip_types.remove(item[1:])
 									else:
 										self.gzip_types.append(item)
+					elif name == 'writers':
+						if value:
+							a = value.split(',')
+							for item in a:
+								if item.find('-') < 0:
+									self.writers.append(item)
+								else:
+									_ip = item.split('.')
+
+									_last = _ip[3].split('-')
+
+									for i in range(int(_last[0]), int(_last[1])+1):
+										ip = '.'.join([_ip[0], _ip[1], _ip[2], str(i)])
+										self.writers.append(ip)
 			except:
-				pass
+				raise
 
 			web_config_parsed = True
 
 	def init_handler(self, conn, client_address, rw_mode=0):
-		self.sock = conn
 		self.addr = client_address
+		self.sock = conn
+		if self.sock:
+			self.sock_fileno = conn.fileno()
 		
 		self.out_body_file = self.out_body_mmap = self._c = self.accept_encoding = None
-		self.out_body_size = self.out_body_file_lmt = self.cmd_get = self.cmd_head =  self.cmd_put =  self.cmd_delete = self.if_modified_since = self.keep_connection = 0
+		self.out_body_size = self.out_body_file_lmt = self.cmd_get = self.cmd_head =  self.cmd_put =  self.cmd_delete = self.if_modified_since = self.keep_connection = self.xResult = 0
 		self.has_resp_body = self.xcache_hit = False
 		self.canbe_gzipped = self.gzip_transfer = self.gzip_chunked = False
 		self.gzip_finished = self.next_request = True
@@ -569,6 +595,9 @@ class _xHandler:
 				if parse_stat == self.PARSE_OK or parse_stat == self.PARSE_MORE:
 					if self.cmd_get == 1 or self.cmd_head == 1:
 						self.x_GET()
+						self.x_response()
+					elif self.cmd_put == 1 or self.cmd_delete == 1:
+						self.x_PUT()
 						self.x_response()
 					else:
 						self.xResult = self.xR_ERR_HANDLE
@@ -601,9 +630,6 @@ class _xHandler:
 			self.r_http_ver = 1
 		else:
 			self.keep_connection = 0
-
-		#accept_encoding = ['gzip', 'deflate', 'sdch'] or ['gzip'] or ['null']
-		#self.accept_encoding = self.in_headers.get("Accept-Encoding", "null").replace(' ','').split(',')
 
 		if self.server.zlb_mode:
 			if gen_xcache_key:
@@ -642,6 +668,10 @@ class _xHandler:
 		if code == 200:
 			self.resp_msg = "OK"
 			self.has_resp_body = True
+		elif code == 201:
+			self.resp_msg = "Created"
+		elif code == 204:
+			self.resp_msg = "No Content"
 		elif code == 301:
 			self.resp_msg = "Move Permanent"
 		elif code == 302:
@@ -656,6 +686,8 @@ class _xHandler:
 			self.resp_msg = "Server Error"
 		elif code == 502:
 			self.resp_msg = "Server Reset"
+		elif code == 503:
+			self.resp_msg = "Service Unavailable"
 		elif code == 504:
 			self.resp_msg = "Server Timeout"
 
@@ -677,22 +709,29 @@ class _xHandler:
 				self.next_request = False
 							
 	def x_parse(self):
-		#get the request headers
-		_doing_pipelining = _last_pipelining = False
+		#get the request headers, xxx
+		_doing_pipelining = _last_pipelining = _header_parsed = False
 
 		_eol_pos = -1
+		_cl = 0
 
-		if self.sock.fileno() not in self.server.x_reqs:
+		_fn = self.sock_fileno
+		if _fn not in self.server.x_reqs:
 			r = self._r
 			_xreqs_empty = True
 		else:
-			r = self._r = self.server.x_reqs[self.sock.fileno()][0]
+			r = self._r = self.server.x_reqs[_fn][0]
 			_xreqs_empty = False
 
 			if self.EOL2 in r or self.EOL1 in r:
-				if self.server.x_reqs[self.sock.fileno()][1] == 0:
+				if self.server.x_reqs[_fn][1] < 0:
+					#request body not finished recv
+					_header_parsed = True
+					_cl = 0 - self.server.x_reqs[_fn][1]
+					_eol_pos = self.server.x_reqs[_fn][2]
+				elif self.server.x_reqs[_fn][1] == 0:
 					#not pipelining requests, must done before
-					self.server.x_reqs.pop(self.sock.fileno())
+					self.server.x_reqs.pop(_fn)
 					r = self._r = b''
 				else:
 					_doing_pipelining = True
@@ -707,26 +746,37 @@ class _xHandler:
 						#peer closed connection?
 						return self.PARSE_ERROR
 
-				_eol_pos = r.find(self.EOL2)
-				if _eol_pos > -1: 
+				if not _header_parsed:
+					_eol_pos = r.find(self.EOL2)
+
+				if _eol_pos > -1 and not _header_parsed: 
 					#headers mostly end with EOL2 "\n\r\n"
 					if not self.server_pipelining:
 						if not _xreqs_empty:
 							#a big-headers request is all recieved
-							self.server.x_reqs.pop(self.sock.fileno())
+							self.server.x_reqs.pop(_fn)
 					else:
 						#for http pipelining
 						if r.count(self.EOL2) > 1: 
 							c = r.split(self.EOL2, 1)
 							r = c[0]
-							self.server.x_reqs[self.sock.fileno()] = [c[1], 1]
+							self.server.x_reqs[_fn] = [c[1], 1]
 						else:
-							self.server.x_reqs[self.sock.fileno()] = [r, 1]
+							self.server.x_reqs[_fn] = [r, 1]
 							_last_pipelining = True
 					break
+				elif _eol_pos > -1 and _header_parsed:
+					self._rb = r[_eol_pos+len(self.EOL2):]
+					if _cl > len(self._rb):
+						self.server.x_reqs[_fn] = [r, 0 - _cl, _eol_pos]
+						return self.PARSE_AGAIN
+					else:
+						self.server.x_reqs.pop(_fn)
+						break
+						#return self.PARSE_OK
 				else:
 					#not finished all headers, save recv data
-					self.server.x_reqs[self.sock.fileno()] = [r, 0]
+					self.server.x_reqs[_fn] = [r, 0]
 					return self.PARSE_AGAIN
 				#self.sock.setblocking(0)
 			except socket.error as e:
@@ -749,9 +799,6 @@ class _xHandler:
 		if len(a) < 2:
 			#illeagal request headers
 			return self.PARSE_ERROR
-
-		if _eol_pos  < len(r) - len(self.EOL2):
-			self._rb = r[_eol_pos+len(self.EOL2):]	 #request body, may be PUT method
 
 		#"GET / HTTP/1.1"
 		self.command, self.path, _c_http_ver = a[0].split()
@@ -784,7 +831,24 @@ class _xHandler:
 
 		self.check_connection(_c_http_ver)
 
-		if self.sock.fileno() not in self.server.x_reqs:
+		if self.cmd_put == 1:
+			if _eol_pos  < len(r) - len(self.EOL2):
+				self._rb = r[_eol_pos+len(self.EOL2):]	 #request body
+			else:
+				self._rb = b''
+
+			_cl = int(self.in_headers.get("Content-Length", "0"))
+			if _cl == 0:
+				return self.PARSE_ERROR
+			elif _cl > len(self._rb):
+				#not finished recv request body
+				self.server.x_reqs[_fn] = [r, 0 - _cl, _eol_pos]
+				return self.PARSE_AGAIN
+			else:
+				#full request body recv
+				return self.PARSE_OK
+
+		if _fn not in self.server.x_reqs:
 			return self.PARSE_OK
 		else:
 			if not _doing_pipelining:
@@ -857,11 +921,11 @@ class _xHandler:
 				self.set_out_header("Location", ''.join([path, "/"]))
 				return
 
-		for index in self.index_files:
-			index = os.path.join(path, index)
-			if os.path.exists(index):
-				path = index
-				break
+			for index in self.index_files:
+				index = os.path.join(path, index)
+				if os.path.exists(index):
+					path = index
+					break
 
 		try:
 			f = open(path, 'rb')
@@ -908,6 +972,51 @@ class _xHandler:
 
 		self.set_resp_code(200)
 
+	def x_PUT(self):
+		try:
+			_peer_ip, _port = self.sock.getpeername()
+		except:
+			_peer_ip = b''
+
+		if _peer_ip not in self.writers:
+			self.xResult = self.xR_ERR_HANDLE
+			return
+
+		path = ''.join([self.homedir, self.path])
+
+		if not os.path.isdir(path):
+			if self.cmd_delete == 1:
+				if os.path.exists(path):
+					try:
+						os.unlink(path)
+						self.set_resp_code(204)
+					except:
+						self.set_resp_code(403)
+				else:
+					self.set_resp_code(204)
+
+			elif self.cmd_put == 1:
+				try:
+					_dir = path.rsplit('/', 1)[0]
+					if not os.path.exists(_dir):
+						os.makedirs(_dir, 0755)
+
+					f = open(path, 'wb')
+					f.write(self._rb)
+					f.close()
+					self.set_resp_code(201)
+				except IOError as e:
+					self.set_resp_code(403)
+		else:
+			if self.cmd_delete == 1:
+				try:
+					os.rmdir(path)
+					self.set_resp_code(204)
+				except:
+					self.set_resp_code(403)
+			else:
+				self.set_resp_code(403)
+
 	def send_out_all_headers(self, extra=None):
 		if extra:
 			if self.keep_connection == 1 and self.r_http_ver == self.HTTP11:
@@ -930,8 +1039,7 @@ class _xHandler:
 			_sent = 0
 			self.transfer_completed = 0
 
-			_s_sock_fileno = self.sock.fileno()
-			_rs = self.server.resume.get(_s_sock_fileno)
+			_rs = self.server.resume.get(self.sock_fileno)
 			if _rs:
 				self.out_body_file, self.out_body_size, sent, self.keep_connection, self.gzip_transfer, self.xcache_key = _rs
 				if self.gzip_transfer:
@@ -945,7 +1053,7 @@ class _xHandler:
 					self.gzip_finished = self.server.gzip_shelf[self.xcache_key][6]
 			else:
 				#no such resume, must be first trans
-				self.server.epoll.modify(_s_sock_fileno, select.EPOLLIN)
+				self.server.epoll.modify(self.sock_fileno, select.EPOLLIN)
 				self.resume_transfer = sent = 0
 				self.out_head_s = self.server.xcache[self.xcache_key][1]
 				self.out_body_file = self.server.xcache[self.xcache_key][2]
@@ -1067,33 +1175,40 @@ class _xHandler:
 					if isinstance(self.out_body_file, str):
 						_sent = self.sock.send(self.out_body_file[sent:_send_buf+sent])
 					else:
-						_sent = sendfile.sendfile(self.sock.fileno(), self.out_body_file.fileno(),
+						_sent = sendfile.sendfile(self.sock_fileno, self.out_body_file.fileno(),
 													sent, _send_buf)
 					sent += _sent
 					if self.resume_transfer == 0:
 						#after transfer snd_buf data, requeue event, let other event to be handled
 						if sent < self.out_body_size or not self.gzip_finished:
-							self.server.resume[self.sock.fileno()] = [self.out_body_file,
+							self.server.resume[self.sock_fileno] = [self.out_body_file,
 									self.out_body_size, sent, self.keep_connection,
 									self.gzip_transfer, self.xcache_key]
-							self.server.epoll.modify(self.sock.fileno(), select.EPOLLOUT)
+							self.server.epoll.modify(self.sock_fileno, select.EPOLLOUT)
 							self.transfer_completed = 0
 					else:
 						if self.out_body_size == sent and self.gzip_finished:
-							del self.server.resume[self.sock.fileno()]
-							self.server.epoll.modify(self.sock.fileno(), select.EPOLLIN)
+							self.server.resume.pop(self.sock_fileno)
+							self.server.epoll.modify(self.sock_fileno, select.EPOLLIN)
 							self.transfer_completed = 1
 						else:
-							self.server.resume[self.sock.fileno()] = [self.out_body_file,
+							self.server.resume[self.sock_fileno] = [self.out_body_file,
 									self.out_body_size, sent, self.keep_connection,
 									self.gzip_transfer, self.xcache_key]
-				except OSError as e:
-					if e[0] == errno.EAGAIN:
+				except OSError as e: #rrr
+					if e.errno == errno.EAGAIN:
 						#send buffer full?just wait to resume transfer
 						#and gevent mode can't reach here, beacause gevent_sendfile intercepted the exception
-						self.server.resume[self.sock.fileno()] = [self.out_body_file,
+						self.server.resume[self.sock_fileno] = [self.out_body_file,
 									self.out_body_size, sent, self.keep_connection,
 									self.gzip_transfer, self.xcache_key]
+					elif e.errno == errno.EPIPE:
+						#peer closed connection
+						self.transfer_completed = 1
+						self.server.resume.pop(self.sock_fileno)
+						self.server.cleanup(self.sock_fileno);
+					else:
+						raise
 
 				if not self.gzip_finished:
 					#continue gen gzip chunked encoding file data, zzz
@@ -1139,15 +1254,15 @@ class _xHandler:
 			self.send_out_all_headers()
 		elif self.resp_code == self.HTTP_OK and self.cmd_head == 1:
 			self.send_out_all_headers()
-		elif self.resp_code >= self.HTTP_BAD_REQUEST:
+		elif self.resp_code >= self.HTTP_BAD_REQUEST or self.resp_code == 201 or self.resp_code == 204:
 			self.send_out_all_headers(extra = "%d %s" % (self.resp_code, self.resp_msg))
 
 	def clean(self):
-		self.in_headers.clear()
-		self.out_headers.clear()
-
-		if self.keep_connection == 0 and self.transfer_completed == 1:
-			self.sock.close()
+		if self.transfer_completed == 1:
+			self.in_headers.clear()
+			self.out_headers.clear()
+			if self.keep_connection == 0:
+				self.sock.close()
 
 def gevent_sendfile(out_fd, in_fd, offset, count):
 	#This function is borrowed from gevent's example code, thanks!
@@ -1410,6 +1525,7 @@ class _xZHandler(_xHandler, _xDNSHandler):
 
 	Z_RR = 0  #round robin
 	Z_IP = 1  #ip hash
+	Z_URL = 2 #url hash
 
 	None2 = [None, None]
 
@@ -1425,13 +1541,16 @@ class _xZHandler(_xHandler, _xDNSHandler):
 					gevent_stream=False, recv_buf_size=16384, send_buf_size=65536, z_mode=0):
 		_xHandler.__init__(self, conn, client_address, server, native_epoll, gevent_stream, recv_buf_size, send_buf_size)
 
+		if Z_mode > z_mode:
+			z_mode = Z_mode
+
 		if z_mode >= 0:
 			_xDNSHandler.__init__(self, conn, client_address, server, config_section='3zsd')
 			self.z_mode = z_mode
 		else:
 			self.z_mode = 0
 
-		if Xcache_shelf == 1:
+		if X_shelf == 1:
 			self.z_xcache_shelf = True
 			self.server.xcache_shelf = shelve.open('shelf.xcache', writeback=True)
 
@@ -1463,10 +1582,9 @@ class _xZHandler(_xHandler, _xDNSHandler):
 			return
 
 	def z_check_xcache(self, _f):
-		if self.if_modified_since == 0:
+		if self.if_modified_since == 0 and self.in_headers.get("Cache-Control", "null").find("no-cache") < 0:
 
-			_key_found = False
-			_in_shelf = False
+			_key_found = _in_shelf = False
 
 			self.accept_encoding = self.in_headers.get("Accept-Encoding")
 			if self.accept_encoding:
@@ -1539,11 +1657,21 @@ class _xZHandler(_xHandler, _xDNSHandler):
 							self.x_response()
 						else:
 							self.z_GET_init()
-							_do_clean = False
+							if self.xResult < 0:
+								#something wrong
+								if self.xResult == self.xR_ERR_5xx:
+									#backend error
+									self.x_response()
+							else:
+								_do_clean = False
 					elif self.cmd_put == 1 or self.cmd_delete == 1:
 						if hasattr(self, "z_PUT_init"):
 							self.z_PUT_init()
-							_do_clean = False
+							if self.xResult < 0:
+								if self.xResult == self.xR_ERR_5xx:
+									self.x_response()
+							else:
+								_do_clean = False
 						else:
 							self.xResult = self.xR_ERR_HANDLE
 					else:
@@ -1625,7 +1753,7 @@ class _xZHandler(_xHandler, _xDNSHandler):
 				#to backend, resume_transfer = 3
 				#print "3 s->b"  #server to backend
 				self.init_handler(self.server.zconns[f], self.server.zaddrs[f], rw_mode)
-				self.z_GET_backend()
+				_do_clean = self.z_GET_backend()
 			else:
 				self.xResult = self.xR_ERR_PARSE
 
@@ -1648,12 +1776,75 @@ class _xZHandler(_xHandler, _xDNSHandler):
 			self.rrn[self.z_hostname] = (self.rrn[self.z_hostname] + 1) % len(self.rra.get(self.z_hostname))
 			return self.z_backends[0]
 		elif self.z_mode == self.Z_IP:
-			pass
+			try:
+				_ip_peer, _port_peer = self.sock.getpeername()
+				_ip_forward = self.in_headers.get('X-Forwarded-For')
+				if _ip_forward:
+					#get the real peer ip, for what via cache servers
+					_ip_peer = _ip_forward.split(',', 1)[0].strip()
+			except:
+				_ip_peer = b''
+
+			_ips = self.rra.get(self.z_hostname)
+			_ips_n = len(_ips)
+			if _ip_peer:
+				#ip hash, with c block num
+				_ip = _ip_peer.split('.')
+				_idx = __idx = (int(_ip[0])*65536 + int(_ip[1])*256 + int(_ip[2]))%_ips_n
+				_try = 1
+
+				while self.stat[_ips[_idx]][0] == False:
+					#server marked down
+					_t = time.time()
+					if _t - self.stat[_ips[_idx]][2] > self.stat[_ips[_idx]][1]:
+						#expires ttl, will be rechecked
+						self.stat[_ips[_idx]][0] = True
+						self.stat[_ips[_idx]][2] = _t
+						break
+
+					_idx = random.randint(0, _ips_n - 1)
+					if _idx == __idx:
+						_idx = (_idx + 1) % _ips_n
+
+					_try += 1
+					if _try >= _ips_n:
+						break
+				return _ips[_idx]
+			else:
+				return _ips[random.randint(0, _ips_n - 1)]
+		elif self.z_mode == self.Z_URL:
+			#url hash, with path md5's first 6 hex digist
+			md5 = hashlib.md5()
+			md5.update(self.path)
+			_path_md5 = md5.hexdigest()
+
+			_ips = self.rra.get(self.z_hostname)
+			_ips_n = len(_ips)
+			_idx = __idx = (int(_path_md5[0:1], base=16)*65536 + int(_path_md5[2:3], base=16)*256 + int(_path_md5[4:5], base=16))%_ips_n
+			_try = 1
+
+			while self.stat[_ips[_idx]][0] == False:
+				#server marked down
+				_t = time.time()
+				if _t - self.stat[_ips[_idx]][2] > self.stat[_ips[_idx]][1]:
+					#expires ttl, will be rechecked
+					self.stat[_ips[_idx]][0] = True
+					self.stat[_ips[_idx]][2] = _t
+					break
+
+				_idx = random.randint(0, _ips_n - 1)
+				if _idx == __idx:
+					_idx = (_idx + 1) % _ips_n
+
+				_try += 1
+				if _try >= _ips_n:
+					break
+			return _ips[_idx]
 
 	def z_GET_backend(self):
 		#resume send (large)request to backend
 		self._r = self.server.z_reqs[self._f]
-		self.z_send_request_resume(self._r, self._f)
+		return self.z_send_request_resume(self._r, self._f)
 
 	def z_connect_backend(self, rw=0, client_sock=None, addr=None, update_cb_conns=True):
 		#print "connecting to backend" #bbb
@@ -1678,7 +1869,23 @@ class _xZHandler(_xHandler, _xDNSHandler):
 			#self.z_host_sock = gevent.socket.create_connection(self.z_host_addr)
 			self.z_host_sock = socket.socket()
 			self.z_host_sock.settimeout(5)
-			self.z_host_sock.connect(self.z_host_addr)
+			try:
+				self.z_host_sock.connect(self.z_host_addr)
+			except socket.error as e: #ppp
+				_addr_s = ''.join([self.z_host_addr[0],':',str(self.z_host_addr[1])])
+				self.stat[_addr_s][0] = False
+				self.stat[_addr_s][2] = time.time()
+				if e.errno == errno.ECONNRESET:
+					self.set_resp_code(502)
+				elif e.errno == errno.ETIMEDOUT:
+					self.set_resp_code(504)
+				elif e.errno == errno.ECONNREFUSED:
+					self.set_resp_code(503)
+				else:
+					self.set_resp_code(500)
+				self.xResult = self.xR_ERR_5xx
+				return
+
 			self.z_host_sock.setblocking(0)
 
 			self.z_host_sock.setsockopt(socket.SOL_SOCKET,socket.SO_KEEPALIVE,1)
@@ -1722,31 +1929,30 @@ class _xZHandler(_xHandler, _xDNSHandler):
 		#self.server.z_resp_header[self._f] = None
 		self.server.z_path[self._f] = self.path
 
-		if no_recv:
-			self.z_host_sock.shutdown(socket.SHUT_RD)
+		#if no_recv:
+		#	self.z_host_sock.shutdown(socket.SHUT_RD)
 
-		try: #sss
-			sent = self.z_host_sock.send(self._r)
-		except socket.error as e:
-			return self.PARSE_ERROR
-
-		if no_recv:
-			self.z_host_sock.close()
-			self.server.zconns.pop(self._f)
-			self.server.zaddrs.pop(self._f)
-			self.server.zhosts.pop(self._f)
-		else:
-			if self._f in self.server.z_reqs_cnt:
-				self.server.z_reqs_cnt[self._f] += 1
+		try:
+			if len(self._r) > self.send_buf_size/2:
+				_buf_size = self.send_buf_size/2
+				_once = False
 			else:
-				self.server.z_reqs_cnt[self._f] = 1
+				_buf_size = len(self._r)
+				_once = True
 
-			if sent < len(self._r):
-				self.server.z_reqs_stat[self._f] = sent
+			sent = self.z_host_sock.send(self._r[:_buf_size])
+
+			if sent < _buf_size:
+				_once = False
+
+			if not _once:
+				self.server.z_reqs_stat[self._f] = [sent, no_recv]
 				try:
 					self.server.epoll.register(self._f, select.EPOLLIN | select.EPOLLOUT)
 				except IOError as e:
 					self.server.epoll.modify(self._f, select.EPOLLIN | select.EPOLLOUT)
+				except:
+					raise
 			else:
 				if self._f in self.server.z_reqs_stat:
 					self.server.z_reqs_stat.pop(self._f)
@@ -1754,18 +1960,61 @@ class _xZHandler(_xHandler, _xDNSHandler):
 					self.server.epoll.register(self._f, select.EPOLLIN)
 				except IOError as e:
 					self.server.epoll.modify(self._f, select.EPOLLIN)
+				except:
+					raise
+
+		except socket.error as e:
+			return self.PARSE_ERROR
+		except:
+			raise
+
+		if no_recv:
+			if _once:
+				try:
+					self.server.epoll.unregister(self._f)
+				except:
+					raise
+				self.z_host_sock.close()
+				self.server.zconns.pop(self._f)
+				self.server.zaddrs.pop(self._f)
+				self.server.zhosts.pop(self._f)
+		else:
+			if self._f in self.server.z_reqs_cnt:
+				self.server.z_reqs_cnt[self._f] += 1
+			else:
+				self.server.z_reqs_cnt[self._f] = 1
 
 	def z_send_request_resume(self, _r, _f):
 		#resume request sending
 		if _f in self.server.z_reqs_stat:
-			begin = self.server.z_reqs_stat[_f]
-			sent = self.z_host_sock.send(_r[begin:])
+			begin, no_recv = self.server.z_reqs_stat[_f]
+
+			if len(_r[begin:]) > self.send_buf_size/2:
+				_buf_size = self.send_buf_size/2
+			else:
+				_buf_size = len(_r[begin:])
+
+			sent = self.z_host_sock.send(_r[begin:begin+_buf_size])
+
 			if begin + sent < len(_r):
-				self.server.z_reqs_stat[_f] = begin + sent
+				self.server.z_reqs_stat[_f] = [begin + sent, no_recv]
 			else:
 				#all sent
 				self.server.z_reqs_stat.pop(_f)
-				self.server.epoll.modify(_f, select.EPOLLIN)
+
+				if not no_recv:
+					self.server.epoll.modify(_f, select.EPOLLIN)
+				else:
+					try:
+						self.server.epoll.unregister(self._f)
+					except:
+						pass
+					self.z_host_sock.close()
+					self.server.zconns.pop(self._f)
+					self.server.zaddrs.pop(self._f)
+					self.server.zhosts.pop(self._f)
+
+		return False
 
 	def z_GET_init(self):
 		#init connection to backend, send request, ggg
@@ -1793,17 +2042,12 @@ class _xZHandler(_xHandler, _xDNSHandler):
 				self.z_connect_backend()
 				_f = self._f
 
+			if self.xResult == self.xR_ERR_5xx:
+				return
+
 			self.z_send_request_init()
 		except:
 			self.xResult = self.xR_ERR_HANDLE
-			"""
-			if _f:
-				self.server.zaddrs.pop(_f)
-				self.server.zconns[_f].close()
-				self.server.zconns.pop(_f)
-				self.server.z_reqs.pop(_f)
-				self.server.c_path.pop(_f)
-			"""
 
 	def z_transfer_client(self, __f):
 		#to client 222
@@ -2067,7 +2311,7 @@ class _xZHandler(_xHandler, _xDNSHandler):
 			return self.PARSE_MORE
 
 	def parse_backend_response_headers(self, _b, _f):
-		#cut headers out ppp
+		#cut headers out
 		b = _b.split(self.EOL2, 1)
 		sp = len(self.EOL2)
 
@@ -2349,6 +2593,9 @@ class _xDFSHandler(_xZHandler):
 				#print "z_GET_init new conn:", self._f, _f
 				self.z_connect_backend()
 				_f = self._f
+
+			if self.xResult == self.xR_ERR_5xx:
+				return
 
 			self.z_send_request_init()
 		except:
