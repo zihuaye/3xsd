@@ -1,10 +1,10 @@
-3xsd is a native epoll server serving TCP/UDP connections, a high performance static web server, a failover dns server, a http-based distributed file server(implementing), and a load-balance proxy-cache server.
+3xsd is a native epoll server serving TCP/UDP connections, a high performance static web server, a failover dns server, a http-based distributed file server, and a load-balance proxy-cache server.
 
 Features in detail:
 
 3wsd - web server supporting: static files, event driven(epoll), using mmap & sendfile to send files,
        in-mem xcache, transparent gzip content transfer with fixed length(small file) & 
-       chunked(large file), persistent storage of gzip files
+       chunked(large file), persistent storage of gzip files, partial support of WebDAV(PUT/DELETE)
        
 3nsd - dns server supporting: only A record resolution, domainname failover(refer to conf file),
        ip icmp probe & hide when fail, round robbin ip resolving
