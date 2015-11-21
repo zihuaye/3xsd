@@ -3,5 +3,6 @@
 3. 3wsd on-the-fly gzip cache(shelve) (done)
 4. Independent thread to maintain mem cache, shelf, connections, ... (continue optimizing)
 5. 3wsd PUT/DELETE method (done)
-6. 3zsd ip_hash & url_hash options to choose backend server (done)
+6. 3zsd ip_hash & url_hash options to choose backend server, re-locating when backend failue (done)
 7. Large file transfer optimizing (done)
+8. 3zsd connect backend error handling (done)
