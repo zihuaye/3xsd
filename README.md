@@ -1,40 +1,41 @@
-#3xsd
+##3xsd
 3xsd is a native epoll server serving TCP/UDP connections, a high performance static web server, a failover dns server, a http-based distributed file server, and a load-balance proxy-cache server.
 
-#Features in detail:
+##Features in detail:
 
-##3wsd - web server supporting: static files, event driven(epoll), using mmap & sendfile to send files,
+###3wsd - web server supporting: static files, event driven(epoll), using mmap & sendfile to send files,
        in-mem xcache, transparent gzip content transfer with fixed length(small file) & 
        chunked(large file), persistent storage of gzip files, partial support of WebDAV(PUT/DELETE)
        
-##3nsd - dns server supporting: only A record resolution, domainname failover(refer to conf file),
+###3nsd - dns server supporting: only A record resolution, domainname failover(refer to conf file),
        ip icmp probe & hide when fail, round robbin ip resolving
        
-##3zsd - proxy server supporting: load balance backend servers, in-mem file caching & 
+###3zsd - proxy server supporting: load balance backend servers, in-mem file caching & 
        persistent cache file storage
 
-##3fsd - distribute web file system supporting: mass unlimitted file storage, easy to expand,
+###3fsd - distribute web file system supporting: mass unlimitted file storage, easy to expand,
        O(1) location algorithm, non-centralized, can work with stand web server(WebDAV) in proxy mode
        file redundancy, file persistent caching
 
 More to find in .conf file.
 
-#Performance:
+##Performance:
 
-  ##3wsd:
+  ###3wsd:
   Small file under 1KB single process test(full in-mem), contrast with nginx configuring accept_mutex off, 
 80% performance.
-  Multi processes test, with reuse_port enabling kernel, 95% performance of nginx(and beyond, may be 105% or more, based on process number, I tested 2-4).
+  Multi processes test, with reuse_port enabling kernel, 95% performance of nginx(and beyond,
+  may be 105% or more, based on process number, I tested 2-4).
   The tests above is not quite strict， but I just want to say that it's fast enough.
   
-  ##3zsd:
+  ###3zsd:
   About 80% performance of 3wsd.
   
-  ##3nsd:
+  ###3nsd:
   Fast enough...about 2800-3000 queries/s per processes, with 1GHz bcm2709 4-cores ARMv7 cpu testing, better when 
   multi-processes with reuse_port enabling kernel.
   
-  ##3fsd:
+  ###3fsd:
   Same with 3zsd.
   
   There are at lease two ways to increase the performance of 3xsd:
