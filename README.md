@@ -51,7 +51,7 @@ More to find in .conf file.
   2.Use PyPy.
     This can gain about 10%-15% performance increasement(or more).
 
-#OS requirement: 
+#OS requirement & install: 
 
 CentOS 6.x with python 2.6/2.7, Debian 6/7.
 
