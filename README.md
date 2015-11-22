@@ -54,7 +54,7 @@ There are at lease two ways to increase the performance of 3xsd:
 
 #OS requirement & install: 
 
-CentOS 6.x with python 2.6/2.7, Debian 6/7.
+CentOS 6/7 with python 2.6/2.7, Debian 6/7.
 
 Doing this before running the program(minimal requirement):
 
