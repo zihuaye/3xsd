@@ -7,7 +7,8 @@ failover dns server, a http-based distributed file server, and a load-balance pr
 ###3wsd - web server
        supporting: static files, event driven(epoll), using mmap & sendfile to send files,
        in-mem xcache, transparent gzip content transfer with fixed length(small file) & 
-       chunked(large file), persistent storage of gzip files, partial support of WebDAV(PUT/DELETE)
+       chunked(large file), persistent storage of gzip files,
+       partial support of WebDAV(PUT/DELETE)
        
 ###3nsd - dns server
        supporting: only A record resolution, domainname failover(refer to conf file),
@@ -19,8 +20,8 @@ failover dns server, a http-based distributed file server, and a load-balance pr
 
 ###3fsd - distribute web file system
        supporting: mass unlimitted file storage, easy to expand,
-       O(1) location algorithm, non-centralized, can work with stand web server(WebDAV) in proxy mode
-       file redundancy, file persistent caching
+       O(1) location algorithm, non-centralized, can work with standard web server(WebDAV)
+       in proxy mode, file redundancy, file persistent caching
 
 More to find in .conf file.
 
