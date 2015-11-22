@@ -60,7 +60,9 @@ CentOS 6.x with python 2.6/2.7, Debian 6/7.
 
 Doing this before running the program(minimal requirement):
 
-       yum install python-gevent pysendfile python-setproctitle python-psutil python-pip(optional if install dpkt)
+       yum install python-gevent pysendfile python-setproctitle python-psutil python-pip
+       
+       (python-pip is optional if install dpkt)
   
 Dpkt module is also needed when running 3nsd DNS server, pip install it.
 
