@@ -48,8 +48,8 @@ More to find in .conf file.
 There are at lease two ways to increase the performance of 3xsd:
 
        1.Install Cython, and rename _3xsd.py to _3xsd.pyx, run it. 
-       Cython will compile _3xsd.py lib into a _3xsd.so file, using static type declarations.
-       This can gain about 5%-6% performance increasement.
+       Cython will compile _3xsd.py lib into a _3xsd.so file, using static type
+       declarations. This can gain about 5%-6% performance increasement.
        2.Use PyPy.This can gain about 10%-15% performance increasement(or more).
 
 #OS requirement & install: 
