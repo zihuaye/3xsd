@@ -5,3 +5,4 @@
 5. 3zsd ip_hash & url_hash options to choose backend server, re-locating when backend failure (done)
 6. Large file/request transfer optimizing (done)
 7. 3zsd connect backend error/failure handling (done)
+8. Shelve lock to be save with multiple reader/writer
