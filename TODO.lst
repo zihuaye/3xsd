@@ -7,3 +7,4 @@
 7. 3zsd connect backend error/failure handling (done)
 8. Shelve lock to be save with multiple reader/writer
 9. Fix http/1.0 client chunked gzip transfer problem
+10.Fix http status line problem with caching it
