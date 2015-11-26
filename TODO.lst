@@ -1,10 +1,10 @@
-1. 3wsd/3fsd PUT/DELETE method (done)
-2. 3zsd xcache persistent storage(shelve) (done)
-3. 3wsd on-the-fly gzip cache(shelve) (done)
-4. Independent thread to maintain mem cache, shelf, connections, ... (continue optimizing)
-5. 3zsd ip_hash & url_hash options to choose backend server, re-locating when backend failure (done)
-6. Large file/request transfer optimizing (done)
-7. 3zsd connect backend error/failure handling (done)
-8. Shelve lock to be save with multiple reader/writer
-9. Fix http/1.0 client chunked gzip transfer problem
-10.Fix http status line problem with caching it
+3wsd/3fsd PUT/DELETE method (done)
+3zsd xcache persistent storage(shelve) (done)
+3wsd on-the-fly gzip cache(shelve) (done)
+Independent thread to maintain mem cache, shelf, connections, ... (continue optimizing)
+3zsd ip_hash & url_hash options to choose backend server, re-locating when backend failure (done)
+Large file/request transfer optimizing (done)
+3zsd connect backend error/failure handling (done)
+Shelve lock to be save with multiple reader/writer
+Fix http/1.0 client chunked gzip transfer problem
+Fix http status line problem with caching it
