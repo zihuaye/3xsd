@@ -1,4 +1,4 @@
-v0.0.17  up coming
+v0.0.17  up coming..
 
 fixed:
 http/1.0 client chunked gzip transfer problem by disable it
