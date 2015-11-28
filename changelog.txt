@@ -1,5 +1,6 @@
 v0.0.17  up coming..
 fixed:
+  gevent time.sleep() not implement in lower version(<1.0)
   http/1.0 client chunked gzip transfer problem by disable it
   http status line problem with caching it
   http pipelining problem
