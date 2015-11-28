@@ -1,0 +1,19 @@
+v0.0.17  up coming
+
+fixed:
+http/1.0 client chunked gzip transfer problem by disable it
+http status line problem with caching it
+http pipelining problem
+
+v0.0.16   2015.11.21
+added:
+3wsd/3fsd PUT/DELETE method
+3zsd xcache persistent storage(shelve)
+3wsd on-the-fly gzip cache(shelve)
+Independent thread to maintain mem cache, shelf, connections, ...
+3zsd ip_hash & url_hash options to choose backend server, re-locating when backend failure
+
+optimized:
+Large file/request transfer
+3zsd connect backend error/failure handling
+Shelve lock to be save with multiple reader/writer
