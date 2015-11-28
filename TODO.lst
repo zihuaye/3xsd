@@ -5,6 +5,7 @@ Independent thread to maintain mem cache, shelf, connections, ... (continue opti
 3zsd ip_hash & url_hash options to choose backend server, re-locating when backend failure (done)
 Large file/request transfer optimizing (done)
 3zsd connect backend error/failure handling (done)
-Shelve lock to be save with multiple reader/writer
-Fix http/1.0 client chunked gzip transfer problem
-Fix http status line problem with caching it
+Shelve lock to be save with multiple reader/writer (done)
+Fix http/1.0 client chunked gzip transfer problem (done)
+Fix http status line problem with caching it (done)
+Fix http pipelining problem
