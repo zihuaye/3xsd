@@ -17,6 +17,8 @@ import os, sys, pwd, multiprocessing, psutil, copy
 sys.dont_write_bytecode = True		#do not write .pyc .pyo files, for dev phase
 
 import getopt, setproctitle, gevent
+from distutils.version import StrictVersion
+
 from gevent import monkey
 from gevent.pool import Pool
 
@@ -112,7 +114,7 @@ if __name__ == "__main__":
 			print("-b <num> : backlog(default:1000)")
 			print("-c <num> : max connections(default:10000)")
 			print("-d /path/to/doc_root : document root(default:current path)")
-			print("-f : dfs mode(3fsd, a distributed web file system, implementing...)")
+			print("-f : dfs mode(3fsd, a distributed web file system based on 3zsd)")
 			print("-g : using gevent stream server(libevent for gevent version 0.13.8 and before, libev for 1.0 and later)")
 			print("-h : help information")
 			print("-i : dns mode(3nsd, an intelligent dns server with failover support)")
@@ -124,9 +126,9 @@ if __name__ == "__main__":
 			print("-r : running foreground, for debug & profile purpose")
 			print("-s : single process, no worker(default)")
 			print("-v : show version")
-			print("-w : web mode(3wsd, a simple web server, default)")
+			print("-w : web mode(3wsd, a simple web server with gzipped transfer & partial webdav support, default)")
 			print("-x : z_mode(0 - RR(default), 1 - IP Hash, 2 - URL Hash, 3zsd options to choose backend)")
-			print("-z : accelerating mode(3zsd, a reverse proxy server with load balancing support)")
+			print("-z : accelerating mode(3zsd, a reverse proxy-cache server with load balancing support)")
 			sys.exit()
 	
 	#fork child process 2 times, to avoid zombie process
@@ -145,7 +147,10 @@ if __name__ == "__main__":
 	#notice doing this(patch_thread) in multi-worker mode, will cause key exception error in threading module reported
 	if native_epoll == 1:
 	#turn select patch off, cause epoll will be used
-		monkey.patch_all(socket=True, dns=True, time=True, select=False, thread=False, os=True, ssl=False, httplib=False, aggressive=True)
+		if StrictVersion(gevent.__version__) >= StrictVersion('1.0'):
+			monkey.patch_all(socket=True, dns=True, time=True, select=False, thread=False, os=True, ssl=False, httplib=False, aggressive=True)
+		else:
+			monkey.patch_all(socket=True, dns=True, time=False, select=False, thread=False, os=True, ssl=False, httplib=False, aggressive=True)
 	else:
 	#turn thread patch off, cause it will not be used
 		monkey.patch_all(socket=True, dns=True, time=True, select=True,  thread=False, os=True, ssl=False, httplib=False, aggressive=True)
@@ -259,7 +264,7 @@ if __name__ == "__main__":
 		elif x_dfs:
 			_3xsd.Server.serve_lbs()
 		else:
-			_3xsd.Server.serve_forever()
+			_3xsd.Server.serve_3ws()
 	
 	elif _3xsd.Workers > 0:
 	#fork workers, use gevent.fork instead of os.fork, doing the magic of sharing listen socket, dispatching requests
@@ -315,7 +320,7 @@ if __name__ == "__main__":
 		elif x_dfs:
 			_3xsd.Server.serve_lbs()
 		else:
-			_3xsd.Server.serve_forever()
+			_3xsd.Server.serve_3ws()
 	else:
 		_3xsd.Server._stopped_event.clear()
 		_3xsd.Server.start_accepting()
