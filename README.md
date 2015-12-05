@@ -8,7 +8,7 @@ failover dns server, a http-based distributed file server, and a load-balance pr
        supporting: static files, event driven(epoll), using mmap & sendfile to send files,
        in-mem xcache, transparent gzip content transfer with fixed length(small file) & 
        chunked(large file), persistent storage of gzip files,
-       partial support of WebDAV(PUT/DELETE)
+       partial support of WebDAV(PUT/DELETE), pipelining support
        
 ###3nsd - dns server
        supporting: only A record resolution, domainname failover(refer to conf file),
@@ -33,7 +33,10 @@ More to find in .conf file.
   Multi processes test, with reuse_port enabling kernel, 95% performance of nginx(and beyond,
   may be 105% or more, based on process number, I tested 2-4).
   The tests above is not quite strict， but I just want to say that it's fast enough.
-  
+
+  And with pipelining enabled, 3wsd will perform better with 3-4 requests/send(5%-10%
+  performance increase), 2 requests/send have the same speed with non-piplining.
+
 ###3zsd:
   About 80% performance of 3wsd.
   
