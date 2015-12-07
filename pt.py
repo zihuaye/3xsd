@@ -12,9 +12,9 @@ request = b''
 _n = 0
 lock = threading.Lock()
 
-def new_sock(port):
+def new_sock(addr,port):
 	sock = socket.socket()
-	sock.connect(('localhost', port))
+	sock.connect((addr, port))
 	return sock
 
 def dp(sock, multi, pipeline):
@@ -38,9 +38,11 @@ if __name__ == '__main__':
 	port = 8000
 	n=1000
 	concurrent = 100
-	pipeline=2
+	pipeline=1
 
-        opts, args = getopt.getopt(sys.argv[1:], "p:c:n:o:")
+	addr='localhost'
+
+        opts, args = getopt.getopt(sys.argv[1:], "hp:c:n:o:l:")
 
         for o, a in opts:
                 if o == "-p":
@@ -51,6 +53,19 @@ if __name__ == '__main__':
 			n = int(a)
                 elif o == "-o":
 			port = int(a)
+                elif o == "-l":
+			addr = a
+                elif o == "-h":
+			print "Usage: pt.py <options>"
+			print ""
+			print "Options:"
+			print "-p <num> : pipeline requests to make per request(default 1)"
+			print "-c <num> : concurrent connections(default 100)"
+			print "-n <num> : total requests to perform(default 1000)"
+			print "-o <num> : http server port number(default 8000)"
+			print "-l <addr> : http server ip to connect(default localhost)"
+			print "-h : this help information"
+			sys.exit(0)
 
 	multi=int((n/concurrent)/pipeline)
 
@@ -59,7 +74,7 @@ if __name__ == '__main__':
 
         ts = []
         for x in xrange(concurrent):
-                ts.append(threading.Thread(target=dp, args=(new_sock(port),multi,pipeline)))
+                ts.append(threading.Thread(target=dp, args=(new_sock(addr, port),multi,pipeline)))
         start = time.time()
         for x in xrange(concurrent):
                 ts[x].start()
@@ -68,7 +83,7 @@ if __name__ == '__main__':
         end = time.time()
         t = end - start
 
-	print "HTTP bench testing..."
+	print "HTTP bench testing host", addr, "port", str(port)
 	print "----------------------"
 	print "Concurrent:", concurrent
 	print "Pipelining:", pipeline
