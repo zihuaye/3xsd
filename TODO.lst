@@ -1,1 +1,1 @@
-Fix http pipelining problem (done)
+'kill -HUP <master_pid>' to reload config and child processes.
