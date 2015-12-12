@@ -1,2 +1,2 @@
-'kill -HUP <master_pid>' to reload config and child processes.
+'kill -HUP <master_pid>' to reload config and child processes
 3wsd config item 'expire_types' to control generating 'Cache-Control' and 'Expires' headers for certain mime types
