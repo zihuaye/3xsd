@@ -1,4 +1,4 @@
-'kill -HUP <master_pid>' to reload config and child processes
-3wsd config item 'expire_types' to control generating 'Cache-Control' and 'Expires' headers for certain mime types
-3zsd '*' wildcast hostname to pass to default backends
+'kill -HUP <master_pid>' to reload config and child processes (done)
+3wsd config item 'expire_types' to control generating 'Cache-Control' and 'Expires' headers for certain mime types (done)
+3zsd '*' wildcast hostname to pass to default backends (done)
 3wpd - a warp drive base on UDT and tun
