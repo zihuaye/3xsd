@@ -306,8 +306,6 @@ class _Z_EpollServer(StreamServer):
 		print "s_udts", self.s_udts
 		print "upoll", self.upoll
 		print "udt_send_buf", self.udt_send_buf
-		#if self.upoll:
-		#	print "udt socks map", self.upoll.epoll.obj_map
 
 	def o_mem(self):
 		#scanner.dump_all_objects('/tmp/3wdd_dump.txt')
@@ -562,7 +560,6 @@ class _Z_EpollServer(StreamServer):
 
 	def check_3wd(self): #333
 		while 1:
-			oo = 15
 			try:
 				_tun, _usock, _addr = [None, None, None]
 				if self.handler.wdd_mode == 'client' or self.handler.wdd_mode == 'hybird':
@@ -606,11 +603,6 @@ class _Z_EpollServer(StreamServer):
 				pass
 			#self.o_udts()
 			time.sleep(20)
-
-			oo -= 1
-			if oo == 0:
-				self.o_mem()
-				oo = 15
 
 class _xHandler:
 	http_version_11 = "HTTP/1.1"
