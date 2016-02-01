@@ -27,6 +27,7 @@ from gevent.coros import Semaphore
 from distutils.version import StrictVersion
 from Crypto.Cipher import AES
 from Crypto import Random
+#from meliae import scanner
 
 Port = 8000	#Listening port number
 Backlog = 1000	#Listening backlog
@@ -308,6 +309,10 @@ class _Z_EpollServer(StreamServer):
 		#if self.upoll:
 		#	print "udt socks map", self.upoll.epoll.obj_map
 
+	def o_mem(self):
+		#scanner.dump_all_objects('/tmp/3wdd_dump.txt')
+		pass
+
 	def check_3ws(self):
 		while 1:
 			try:
@@ -518,12 +523,13 @@ class _Z_EpollServer(StreamServer):
 	def handle_event_udt(self): #uuu
 		while 1:
 			try:
-				sets = ([])
+				sets = None
 				sets = self.upoll.wait(True, True, -1)
 				if sets[0]:
 					self.handler.handle_udt_events(sets[0], 0)
 				if sets[1]:
 					self.handler.handle_udt_events(sets[1], 1)
+				del sets
 			except:
 				if self.upoll:
 					del self.upoll
@@ -556,6 +562,7 @@ class _Z_EpollServer(StreamServer):
 
 	def check_3wd(self): #333
 		while 1:
+			oo = 15
 			try:
 				_tun, _usock, _addr = [None, None, None]
 				if self.handler.wdd_mode == 'client' or self.handler.wdd_mode == 'hybird':
@@ -599,6 +606,11 @@ class _Z_EpollServer(StreamServer):
 				pass
 			#self.o_udts()
 			time.sleep(20)
+
+			oo -= 1
+			if oo == 0:
+				self.o_mem()
+				oo = 15
 
 class _xHandler:
 	http_version_11 = "HTTP/1.1"
@@ -3291,7 +3303,7 @@ class _xWHandler:
 		for f, rw_mode in fds:
 			_session = self.server.s_tuns[f]
 			if rw_mode == 0:
-				_tun, _conn, _addr = self.server.zsess[_session]
+				_tun, _conn = self.server.zsess[_session][:2]
 				try:
 					_buf = _tun.read(self.recv_buf_size)
 				except:
@@ -3327,11 +3339,9 @@ class _xWHandler:
 						self.server.upoll.remove_usock(u)
 
 				if _buf:
-					_tun, _conn, _addr2 = self.server.zsess[_session]
 					if self.encrypt:
-						_tun.write(unpad(self.aes[_session].decrypt(_buf)))
-					else:
-						_tun.write(_buf)
+						_buf = unpad(self.aes[_session].decrypt(_buf))
+					self.server.zsess[_session][0].write(_buf)
 
 		if rw_mode == 1:
 			for u in usocks:
