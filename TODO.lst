@@ -1,2 +1,2 @@
-3wdd - memory leak issue in server mode
+3wdd - memory leak issue under server mode, caused by pyudt.epoll_wait returning sets and no gc
 3wdd - AES-128-CBC encrypt method
