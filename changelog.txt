@@ -1,3 +1,15 @@
+v0.0.18  2016.02.01
+fixed:
+  _Z_EpollServer send_buf_size miss configed issue
+
+optimized:
+  'kill -HUP <master_pid>' to reload config and child processes
+  3wsd config item 'expire_types' to control generating 'Cache-Control' and 'Expires' headers for certain mime types
+  3zsd '*' wildcast hostname to pass to default backends 
+
+added:
+  3wdd - a 'warp drive' server, serve UDT tunneling
+
 v0.0.17  2015.12.05
 fixed:
   gevent time.sleep() not implement in lower version(<1.0)
@@ -5,7 +17,7 @@ fixed:
   http status line problem with caching it
   http pipelining problem
 
-v0.0.16   2015.11.21
+v0.0.16  2015.11.21
 added:
   3wsd/3fsd PUT/DELETE method
   3zsd xcache persistent storage(shelve)
