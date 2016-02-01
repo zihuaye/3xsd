@@ -1,4 +1,2 @@
-'kill -HUP <master_pid>' to reload config and child processes (done)
-3wsd config item 'expire_types' to control generating 'Cache-Control' and 'Expires' headers for certain mime types (done)
-3zsd '*' wildcast hostname to pass to default backends (done)
-3wdd - a warp drive base on UDT and tun
+3wdd - memory leak issue
+3wdd - AES-128-CBC encrypt method
