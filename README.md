@@ -25,11 +25,11 @@ a 'warp drive' server.
        in proxy mode, file redundancy, file persistent caching
 
 ###3wdd - 'warp drive' server
-	supporting: data tunneling over UDT and tun,
-	better congestion control than TCP/UDP over wan link,
-	better thoughput(above 80%) over wan link,
-	tunnel ip/mtu/txqueuelen/route define,
-	encrypt packages through AES-128-ECB(CBC coming)
+        supporting: data tunneling over UDT and tun,
+        better congestion control than TCP/UDP over wan link,
+        better thoughput(above 80%) over wan link,
+        tunnel ip/mtu/txqueuelen/route define,
+        encrypt packages through AES-128-ECB(CBC coming)
 
 More to find in .conf file.
 
