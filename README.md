@@ -1,6 +1,7 @@
 ##3xsd
 3xsd is a native epoll server serving TCP/UDP connections, a high performance static web server, a
-failover dns server, a http-based distributed file server, and a load-balance proxy-cache server.
+failover dns server, a http-based distributed file server, a load-balance proxy-cache server, and
+a 'warp drive' server.
 
 ##Features in detail:
 
@@ -22,6 +23,13 @@ failover dns server, a http-based distributed file server, and a load-balance pr
        supporting: mass unlimitted file storage, easy to expand,
        O(1) location algorithm, non-centralized, can work with standard web server(WebDAV)
        in proxy mode, file redundancy, file persistent caching
+
+###3wdd - 'warp drive' server
+	supporting: data tunneling over UDT and tun,
+	better congestion control than TCP/UDP over wan link,
+	better thoughput(above 80%) over wan link,
+	tunnel ip/mtu/txqueuelen/route define,
+	encrypt packages through AES-128-ECB(CBC coming)
 
 More to find in .conf file.
 
@@ -47,6 +55,9 @@ More to find in .conf file.
 ###3fsd:
   Same with 3zsd.
   
+###3wdd:
+  Under testing..
+
 ###More performance:
 There are at lease two ways to increase the performance of 3xsd:
 
@@ -67,6 +78,8 @@ Doing this before running the program(minimal requirement):
   
 Dpkt module is also needed when running 3nsd DNS server, pip install it.
 
+If you want to use 3wdd, python-pytun, pyudt4, pycrypto are also needed.
+
 Or, of cause you can let pip do it all for you:
 
        pip install 3xsd
@@ -82,6 +95,9 @@ Python Packages(Modules) version reference:
        setproctitle==1.0.1
        psutil==0.6.1
        dpkt==1.6
+       python-pytun==2.2.1
+       pyudt4==0.6.0
+       pycrypto==2.6.1
 
 To install a module of specific version(like gevent 0.13.8), you can:
 
