@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
 # 3xsd is a native epoll server serving TCP/UDP connections, a high performance static web server, a failover dns server,
-# a http-based distributed file server, and a load-balance proxy-cache server.
+# a http-based distributed file server, a load-balance proxy-cache server, and a 'warp drive' server.
 #
 # The xHandler to handle web requests, and the xDNSHandler to handle DNS query.
 # The xZHandler to handle proxy(load-balance/cache)requests, and the xDFSHandler to handle DFS requests.
@@ -13,7 +13,7 @@
 # All 3 party modules copyright go to their authors(see their licenses).
 #
 
-import os, sys, pwd, multiprocessing, psutil, copy
+import os, sys, pwd, multiprocessing, psutil, copy, signal, errno
 sys.dont_write_bytecode = True		#do not write .pyc .pyo files, for dev phase
 
 import getopt, setproctitle, gevent
@@ -29,6 +29,36 @@ except:
 
 import _3xsd
 
+
+def signal_handler(signum, frame):
+	global childs, i_dns, x_dfs, z_lbs, o_wds, homedir, my_title
+	if signum == signal.SIGHUP:
+		if z_lbs == 1:
+			_3xsd.Server.handler.init_zsd_config()
+		elif x_dfs == 1:
+			_3xsd.Server.handler.init_dfs_config()
+		elif i_dns == 1:
+			_3xsd.Server.handler.init_nsd_config()
+		elif o_wds == 1:
+			_3xsd.Server.handler.init_wdd_config()
+		else:
+			_3xsd.Server.handler.init_config()
+
+		if hasattr(_3xsd.Server.handler, "homedir") and homedir != _3xsd.Server.handler.homedir:
+			_homedir = copy.copy(homedir)
+			homedir =  _3xsd.Server.handler.homedir
+			try:
+				os.chdir(homedir)
+			except OSError as e:
+				if e.errno == errno.ENOENT:
+					homedir = _3xsd.Server.handler.homedir = os.getcwd()
+					os.chdir(homedir)
+			my_title = my_title.replace(_homedir, homedir)
+			setproctitle.setproctitle(my_title)
+
+		for _pid in childs:
+			os.kill(_pid, signal.SIGTERM)
+
 if __name__ == "__main__":
 
 	port = 0
@@ -43,6 +73,7 @@ if __name__ == "__main__":
 	i_dns = 0
 	x_dfs = 0
 	z_lbs = 0
+	o_wds = 0
 	uname = None
 	xcache_shelf = 0
 	z_mode = 0
@@ -50,7 +81,7 @@ if __name__ == "__main__":
 	cpu_count = multiprocessing.cpu_count()
 	cpu_affinity = 0
 
-	opts, args = getopt.getopt(sys.argv[1:], "vafhilmngrswzp:c:b:k:d:u:x:")
+	opts, args = getopt.getopt(sys.argv[1:], "vafhilmngrswzop:c:b:k:d:u:x:")
 	
 	for o, a in opts:
 		if o == "-p":
@@ -75,18 +106,29 @@ if __name__ == "__main__":
 			i_dns = 1
 			x_dfs = 0
 			z_lbs = 0
+			o_wds = 0
 		elif o == "-f":
 			i_dns = 0
 			x_dfs = 1
 			z_lbs = 0
+			o_wds = 0
 		elif o == "-z":
 			i_dns = 0
 			x_dfs = 0
 			z_lbs = 1
+			o_wds = 0
 		elif o == "-w":
 			i_dns = 0
 			x_dfs = 0
 			z_lbs = 0
+			o_wds = 0
+		elif o == "-o":
+			i_dns = 0
+			x_dfs = 0
+			z_lbs = 0
+			o_wds = 1
+			if port == 0:
+				port = 9000
 		elif o == "-r":
 			foreground = 1
 		elif o == "-u":
@@ -94,7 +136,12 @@ if __name__ == "__main__":
 		elif o == "-d":
 			homedir = a
 			custum_home = 1
-			os.chdir(homedir)
+			try:
+				os.chdir(homedir)
+			except OSError as e:
+				if e.errno == errno.ENOENT:
+					homedir = os.getcwd()
+					os.chdir(homedir)
 		elif o == "-a":
 			cpu_affinity = 1
 		elif o == "-l":
@@ -123,6 +170,7 @@ if __name__ == "__main__":
 			print("-m : multi-workers depending on cpu cores")
 			print("-n : using system native epoll(default)")
 			print("-p <num> : port number(default:8000)")
+			print("-o : warp mode(3wdd, a warp drive server based on UDT)")
 			print("-r : running foreground, for debug & profile purpose")
 			print("-s : single process, no worker(default)")
 			print("-v : show version")
@@ -134,12 +182,12 @@ if __name__ == "__main__":
 	#fork child process 2 times, to avoid zombie process
 	if not foreground:
 		pid = os.fork()
-	if pid > 0 :
-		sys.exit(0)
+		if pid > 0 :
+			sys.exit(0)
 
-	pid = os.fork()
-	if pid > 0 :
-		sys.exit(0)
+		pid = os.fork()
+		if pid > 0 :
+			sys.exit(0)
 	
 	#now, daemonized, the daemon main process running
 	
@@ -181,6 +229,10 @@ if __name__ == "__main__":
 	elif z_lbs == 1:
 		program_name = '3zsd'
 		_3xsd.Z_mode = z_mode
+	elif o_wds == 1:
+		program_name = '3wdd'
+		if workers > 1:
+			workers = 1
 	else:
 		program_name = '3wsd'
 	
@@ -210,6 +262,10 @@ if __name__ == "__main__":
 		server_mode = 'z_lbs'
 		_3xsd.Handler = _3xsd._xZHandler
 		_3xsd.Server  = _3xsd._Z_EpollServer(("", _3xsd.Port), _3xsd.Handler, backlog=_3xsd.Backlog, spawn=_3xsd.Conns)
+	elif o_wds == 1:
+		server_mode = 'o_wds'
+		_3xsd.Handler = _3xsd._xWHandler
+		_3xsd.Server  = _3xsd._Z_EpollServer(("0.0.0.0", _3xsd.Port), _3xsd.Handler, backlog=_3xsd.Backlog, spawn=_3xsd.Conns, tcp=False, udt=True)
 	#below are web servers
 	elif native_epoll == 1:
 		#init the native epoll server, powerful
@@ -240,7 +296,12 @@ if __name__ == "__main__":
 		if homedir != _3xsd.Server.handler.homedir:
 			_homedir = copy.copy(homedir)
 			homedir =  _3xsd.Server.handler.homedir
-			os.chdir(homedir)
+			try:
+				os.chdir(homedir)
+			except OSError as e:
+				if e.errno == errno.ENOENT:
+					homedir = _3xsd.Server.handler.homedir = os.getcwd()
+					os.chdir(homedir)
 
 	if len(sys.argv) > 1:
 		if custum_home > 0:
@@ -263,6 +324,8 @@ if __name__ == "__main__":
 			_3xsd.Server.serve_lbs()
 		elif x_dfs:
 			_3xsd.Server.serve_lbs()
+		elif o_wds:
+			_3xsd.Server.serve_wds()
 		else:
 			_3xsd.Server.serve_3ws()
 	
@@ -281,8 +344,15 @@ if __name__ == "__main__":
 		
 		if pid > 0:
 			_3xsd.Server.master_works()
+			signal.signal(signal.SIGHUP, signal_handler)
 			while 1:
-				pid_s = os.wait()
+				try:
+					pid_s = os.wait()
+				except OSError as e:
+					if e.errno == errno.EINTR:
+						continue
+					else:
+						raise e
 				print "worker pid:", pid_s[0], " exited, status:", pid_s[1]
 				worker_id = childs.pop(pid_s[0])
 				pid = gevent.fork()
@@ -319,6 +389,8 @@ if __name__ == "__main__":
 			_3xsd.Server.serve_lbs()
 		elif x_dfs:
 			_3xsd.Server.serve_lbs()
+		elif o_wds:
+			_3xsd.Server.serve_wds()
 		else:
 			_3xsd.Server.serve_3ws()
 	else:
