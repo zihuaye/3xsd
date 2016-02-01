@@ -94,9 +94,9 @@ Python Packages(Modules) version reference:
        pysendfile==2.0.1
        setproctitle==1.0.1
        psutil==0.6.1
-       dpkt==1.6
+       dpkt==1.6(1.8.2)
        python-pytun==2.2.1
-       pyudt4==0.6.0
+       pyudt4==0.6.0(epoll-fixes branche)
        pycrypto==2.6.1
 
 To install a module of specific version(like gevent 0.13.8), you can:
