@@ -29,7 +29,7 @@ a 'warp drive' server.
         better congestion control than TCP/UDP over wan link,
         better thoughput(above 80%) over wan link,
         tunnel ip/mtu/txqueuelen/route define,
-        encrypt packages through AES-128-ECB(CBC coming)
+        encrypt packages through AES-128-ECB(CBC/CFB coming)
 
 More to find in .conf file.
 
