@@ -1,4 +1,5 @@
 3wdd - memory leak issue under python 2.6, python 2.7 works fine (seems no solution)
 3wdd - AES-128-CBC/CFB encrypt method (done)
 3wdd - session based encrypt configuration (done)
-3wdd - multi threads to handle multi sessions(tunnels) in both client/server mode, for better multi-cpu usage
+3wdd - multi threads to handle multi sessions(tunnels) in both client/server mode,
+       take advantage of multi-cpus
