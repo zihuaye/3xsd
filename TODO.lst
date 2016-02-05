@@ -2,4 +2,4 @@
 3wdd - AES-128-CBC/CFB encrypt method (done)
 3wdd - session based encrypt configuration (done)
 3wdd - multi threads(max to 2*cpu_counts) to handle multi sessions(tunnels),
-       take advantage of multi-cpus
+       take advantage of multi-cpus, but the GIL..
