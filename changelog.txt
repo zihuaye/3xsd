@@ -1,7 +1,7 @@
 v0.0.19  2016.02.10
 
 unfixed:
-  3wdd memory leak issue under centos6.x/python 2.6, centos7.x/python 2.7 works fine, seems no solution
+  3wdd memory leak issue under centos6.x/python 2.6/2.7, centos7.x/python 2.7 works fine, seems no solution
 
 added:
   3wdd AES-128-ECB/CBC/CFB encrypt method
