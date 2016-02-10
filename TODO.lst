@@ -4,7 +4,7 @@
 
 3wdd - session based encrypt configuration (done)
 
-3wdd - multi threads(max to 2*cpu_counts) to handle multi sessions/tunnels,
+3wdd - multi threads(max to 2*cores) to handle multi sessions/tunnels,
        take advantage of multi-cores, but the GIL..
        (implemented but hard code the thread_limit to 1)
 
