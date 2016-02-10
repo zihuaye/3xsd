@@ -5,8 +5,10 @@
 3wdd - session based encrypt configuration (done)
 
 3wdd - multi threads(max to 2*cpu_counts) to handle multi sessions/tunnels,
-       take advantage of multi-cores, but the GIL..(implemented but hard code the thread_limit to 1)
+       take advantage of multi-cores, but the GIL..
+       (implemented but hard code the thread_limit to 1)
 
 3wdd - multi processes mode when more than 1 worker, avoild GIL issue and take full power of multi-cores
        corresponding to worker_id, port number varied from 9000 to 9001, 9002...
-       load-balance amount 9000-900x (working..done server part..done client part..optimizing..)
+       load-balance amount 9000-900x with least connection policy.
+       (working..done server part..done client part..optimizing..)
