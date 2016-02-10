@@ -231,8 +231,8 @@ if __name__ == "__main__":
 		_3xsd.Z_mode = z_mode
 	elif o_wds == 1:
 		program_name = '3wdd'
-		if workers > 1:
-			workers = 1
+		#if workers < 1:
+			#workers = 1
 	else:
 		program_name = '3wsd'
 	
@@ -283,7 +283,12 @@ if __name__ == "__main__":
 	_3xsd.Server.reuse_addr = 1
 	_3xsd.Server.pre_start()
 	
-	print program_name, "serving at port:", _3xsd.Port, ", master pid:", os.getpid(), ", max conns:", _3xsd.Conns.size, ", backlog:", _3xsd.Backlog, ", workers:", _3xsd.Workers, ", server_mode:", server_mode, ", handler:", _3xsd.Handler, ", version:", _3xsd.__version__, ", socket:", type(_3xsd.Server.socket), ", lib:", _3xsd.__file__
+	if o_wds == 1:
+		_socket_type = 'udt4.UdtSocket'
+	else:
+		_socket_type = type(_3xsd.Server.socket)
+
+	print program_name, "serving at port:", _3xsd.Port, ", master pid:", os.getpid(), ", max conns:", _3xsd.Conns.size, ", backlog:", _3xsd.Backlog, ", workers:", _3xsd.Workers, ", server_mode:", server_mode, ", handler:", _3xsd.Handler, ", version:", _3xsd.__version__, ", socket:", _socket_type, ", lib:", _3xsd.__file__
 	
 	if uname is not None:
 		#set specific uid and gid of process
