@@ -13,10 +13,10 @@
 # All 3 party modules copyright go to their authors(see their licenses).
 #
 
-__version__ = "0.0.18"
+__version__ = "0.0.19"
 
 import os, sys, io, time, calendar, random, multiprocessing, threading
-import shutil, mmap, sendfile, zlib, gzip, copy
+import shutil, mmap, sendfile, zlib, gzip, copy, setproctitle
 import _socket as socket
 import select, errno, gevent, dpkt, ConfigParser, hashlib, struct, shelve
 import pytun, udt4, subprocess
@@ -70,6 +70,7 @@ class _Z_StreamServer(StreamServer):
 			StreamServer.pre_start(self)
 
 	def master_works(self):
+		#obsolete
 		if hasattr(socket, "SO_REUSEPORT"):
 			self.socket.close()
 
@@ -123,8 +124,16 @@ class _Z_EpollServer(StreamServer):
 	ztuns = {}    #tunnels & fd
 	s_tuns = {}   #sessions connected with tuns
 	s_udts = {}   #sessions connected with udts
-	upoll = None  #the udt socket poll
+	epolls = []   #the tun epolls
+	upolls = []   #the udt socket epolls
 	udt_send_buf = {}
+	udt_thread_limit = 0
+	udt_ts = []
+	udt_conns_cnt = {}
+	udt_conns_cnt_lock = None
+	udt_conn_port = None
+	udt_conn_port_lock = None
+	#udt_dialer = True
 
 	def __init__(self, server_address, RequestHandlerClass, backlog=1000, spawn=None,
 							tcp=True, udt=False, recv_buf_size=16384, send_buf_size=65536):
@@ -132,8 +141,22 @@ class _Z_EpollServer(StreamServer):
 			self.recv_buf_size = recv_buf_size
 			self.send_buf_size = send_buf_size
 		elif udt:
+			#this buffer size is about 10Mbps bandwidth between CN&US(Bandwidth*RTT/8)
 			self.recv_buf_size = 262144
 			self.send_buf_size = 262144
+
+			#udt not work with reuse_port option
+			self.reuse_port = False
+
+			#self.udt_thread_limit = multiprocessing.cpu_count()
+			self.udt_thread_limit = 1  #set thread_limit to 1 for the GIL
+
+			self.udt_conns_cnt_lock = multiprocessing.Lock()
+			for i in xrange(Workers + 1):
+				self.udt_conns_cnt[i] = multiprocessing.Value('i', 0, lock=self.udt_conns_cnt_lock)
+
+			self.udt_conn_port_lock = multiprocessing.Lock()
+			self.udt_conn_port = multiprocessing.Value('i', Port, lock=self.udt_conn_port_lock)
 		else:
 			self.recv_buf_size = 65536
 			self.send_buf_size = 65536
@@ -145,7 +168,7 @@ class _Z_EpollServer(StreamServer):
 			print("Good, this kernel has SO_REUSEPORT support")
 
 	def master_works(self):
-		if hasattr(socket, "SO_REUSEPORT") and not self.udt:
+		if hasattr(socket, "SO_REUSEPORT") and self.reuse_port and not self.udt:
 			#close master process's listening socket, because it never serving requests
 			self.socket.close()
 
@@ -184,7 +207,7 @@ class _Z_EpollServer(StreamServer):
 			else:
 				self.handler.sock = self.socket
 		else:
-			if self._worker_id < 1 and Workers > 0:
+			if self._worker_id == 0 and self.workers > 0:
 				#delay socket init for udt worker
 				self.socket = None
 				return
@@ -197,6 +220,10 @@ class _Z_EpollServer(StreamServer):
 				self.socket.setsockopt(udt4.UDT_RCVBUF, self.recv_buf_size) #default 10MB
 				self.socket.setsockopt(udt4.UDT_SNDBUF, self.send_buf_size) #default 10MB
 				#self.socket.setsockopt(udt4.UDT_MSS, 1480)    #default 1500
+				if self.workers > 0:
+					_ip, _port = self.address
+					_port = _port + self._worker_id - 1
+					self.address = (_ip, _port)
 				self.socket.bind(self.address)
 				self.socket.listen(self.backlog)
 			else:
@@ -304,7 +331,7 @@ class _Z_EpollServer(StreamServer):
 		print "ztuns", self.ztuns
 		print "s_tuns", self.s_tuns
 		print "s_udts", self.s_udts
-		print "upoll", self.upoll
+		print "upolls", self.upolls
 		print "udt_send_buf", self.udt_send_buf
 
 	def o_mem(self):
@@ -422,6 +449,8 @@ class _Z_EpollServer(StreamServer):
 	def if_reinit_socket(self):
 		if hasattr(socket, "SO_REUSEPORT") and self.reuse_port and self.workers > 0:
 			self.init_socket(tcp=self.tcp)
+		elif self.udt and self.workers > 0:
+			self.init_socket(tcp=self.tcp)
 
 	def serve_forever(self):
 		#see if reinit socket is neccessary
@@ -471,14 +500,43 @@ class _Z_EpollServer(StreamServer):
 
 	def serve_wds(self): #www
 		try:
-			t = threading.Timer(15, self.check_3wd)
-			t.start()
+			s = 0
+			while s < self.udt_thread_limit:
+				self.epolls.append(None)
+				self.upolls.append(None)
+				s += 1
 
 			if self.handler.wdd_mode == 'client' or self.handler.wdd_mode == 'hybird':
-				for _session in self.handler.wdd_dial:
-					if _session in self.handler.client_session:
-						t = threading.Thread(target=self.handler.connect_udt_server, args=(_session,))
-						t.start()
+				"""
+				if self.udt_thread_limit > 1:
+					pid = os.fork()
+				else:
+					pid = 0
+
+				if pid == 0:
+					setproctitle.setproctitle('3wdd dialer')
+				"""
+				if 1:
+					_idx = -1
+					for _session in self.handler.wdd_dial:
+						_idx += 1
+						if self.workers > 1 and (_idx % self.workers) + 1 != self._worker_id:
+							continue
+						if _session in self.handler.client_session:
+							t = threading.Thread(target=self.handler.connect_udt_server, args=(_session,))
+							t.daemon = True
+							t.start()
+							self.udt_ts.append(t)
+				"""
+				else:
+					setproctitle.setproctitle('3wdd server')
+					self.udt_dialer = False
+				"""
+			t = threading.Thread(target=self.check_3wd, args=())
+			t.daemon = True
+			t.start()
+			self.udt_ts.append(t)
+
 			if self.handler.wdd_mode == 'server' or self.handler.wdd_mode == 'hybird':
 				self.if_reinit_socket()
 				while 1:
@@ -489,11 +547,8 @@ class _Z_EpollServer(StreamServer):
 					#launch setting up udt_tunnel
 					t = threading.Thread(target=self.handler.setup_udt_connection, args=(_conn,_addr,))
 					t.start()
+					self.udt_ts.append(t)
 
-					if _conn:
-						del _conn
-					if _addr:
-						del _addr
 			if self.handler.wdd_mode == 'client':
 				while 1:
 					time.sleep(1000)
@@ -518,29 +573,27 @@ class _Z_EpollServer(StreamServer):
 			self.cleanupall()
 			self.socket.close()		
 
-	def handle_event_udt(self): #uuu
+	def handle_event_udt(self, index): #uuu
 		while 1:
 			try:
 				sets = None
-				sets = self.upoll.wait(True, True, -1)
+				sets = self.upolls[index].wait(True, True, -1)
 				if sets[0]:
 					self.handler.handle_udt_events(sets[0], 0)
 				if sets[1]:
 					self.handler.handle_udt_events(sets[1], 1)
 				del sets
 			except:
-				if self.upoll:
-					del self.upoll
-					self.upoll = None
+				self.upolls[index] = None
 				if sets:
 					del sets
 				raise
 
-	def handle_event_tun(self): #uuu
+	def handle_event_tun(self, index): #uuu
 		_fds = []
 		while 1:
 			try:
-				events = self.epoll.poll()
+				events = self.epolls[index].poll()
 				for f, ev in events:
 					if ev & select.EPOLLIN:
 						_fds.append((f, 0))
@@ -550,20 +603,23 @@ class _Z_EpollServer(StreamServer):
 					self.handler.handle_tun_events(_fds)
 					del _fds[:]
 			except:
-				if self.epoll:
-					self.epoll.close()
-					del self.epoll
-					self.epoll = None
+				self.epolls[index] = None
 				if events:
 					del events
 				raise
 
 	def check_3wd(self): #333
 		while 1:
+			time.sleep(20)
+
 			try:
 				_tun, _usock, _addr = [None, None, None]
-				if self.handler.wdd_mode == 'client' or self.handler.wdd_mode == 'hybird':
+				if (self.handler.wdd_mode == 'client' or self.handler.wdd_mode == 'hybird'):
+					_idx = -1
 					for _session in self.handler.wdd_dial:
+						_idx += 1
+						if self.workers > 1 and (_idx % self.workers) + 1 != self._worker_id:
+							continue
 						if _session in self.handler.client_session:
 							_redial = False
 							_tun, _usock, _addr = self.zsess.get(_session, [None, None, None])
@@ -578,7 +634,10 @@ class _Z_EpollServer(StreamServer):
 
 							if _redial:
 								t = threading.Thread(target=self.handler.connect_udt_server, args=(_session,))
+								t.daemon = True
 								t.start()
+								self.udt_ts.append(t)
+
 				if self.handler.wdd_mode == 'server' or self.handler.wdd_mode == 'hybird':
 					for _session in self.handler.connected:
 						if _session not in self.handler.wdd_dial or _session not in self.handler.client_session:
@@ -593,16 +652,40 @@ class _Z_EpollServer(StreamServer):
 							_conn = self.conns.pop(_cno)
 							_conn.close()
 							del _conn
-				if self.upoll:
-					self.upoll.garbage_collect()
 
+					if self.workers > 1:
+						self.wdd_idle_worker(9000)
 				del _tun
 				del _usock
 				del _addr
 			except:
 				pass
-			#self.o_udts()
-			time.sleep(20)
+
+	def wdd_idle_worker(self, port): #iii
+		conns = -1
+		worker_id = -1
+
+		for _worker_id, _conns in self.udt_conns_cnt.items():
+			if conns == -1:
+				conns = _conns.value
+				worker_id = _worker_id
+			else:
+				if conns > _conns.value:
+					#locate the least connection worker
+					conns = _conns.value
+					worker_id = _worker_id
+
+
+		if self.udt_conns_cnt[port - Port + 1].value > conns:
+			#orig worker has more conns than the least one, redirect to new worker
+			#print "to new server", conns, worker_id
+			self.udt_conn_port.value = worker_id + Port -1
+		else:
+			#no need to redirect
+			#print "keep server", conns, worker_id
+			self.udt_conn_port.value = port
+
+		return self.udt_conn_port.value
 
 class _xHandler:
 	http_version_11 = "HTTP/1.1"
@@ -3003,6 +3086,8 @@ class _xWHandler:
 	wdd_dial = []
 
 	encrypt = False
+	encrypt_mode = None
+	sess_encrypt_mode = {}
 	aes = {}
 
 	session = {}
@@ -3035,6 +3120,8 @@ class _xWHandler:
 		self.wdd_mode = 'server'
 		self.wdd_dial = []
 		self.encrypt = False
+		self.encrypt_mode = None
+		self.sess_encrypt_mode = {}
 		self.aes = {}
 		self.session = {}
 		self.client_session = {}
@@ -3066,8 +3153,16 @@ class _xWHandler:
 			elif name == 'dial':
 				self.wdd_dial = value.split(',')
 			elif name == 'encrypt':
-				if value.lower() == 'on':
-					self.encrypt = True
+				self.encrypt = True
+				_value = value.lower()
+				if _value == 'on' or  _value == 'aes-128-ecb':
+					self.encrypt_mode = AES.MODE_ECB
+				elif _value == 'aes-128-cbc':
+					self.encrypt_mode = AES.MODE_CBC
+				elif _value == 'aes-128-cfb':
+					self.encrypt_mode = AES.MODE_CFB
+				else:
+					self.encrypt = False
 			else:
 				v = value.split(':')
 				if len(v) >= 5:
@@ -3079,19 +3174,35 @@ class _xWHandler:
 					self.token[name] = v[4]
 					self.e_token[name] = self.encrypt_token(name, v[4])
 					if self.encrypt:
-						#aes-128-ecb used default
-						self.aes[name] = AES.new(self.e_token[name], AES.MODE_ECB)
+						if self.encrypt_mode == AES.MODE_CBC or self.encrypt_mode == AES.MODE_CFB:
+							#aes-128-cbc, aes-128-cfb
+							pass
+						else:
+							#aes-128-ecb as default
+							if name not in self.aes:
+								self.aes[name] = AES.new(self.e_token[name], AES.MODE_ECB)
 				if len(v) > 5:
 					if v[5]:
-						self.peer_ip[name] = v[5]
+						_em = v[5].lower()
+						if _em == 'aes-128-cbc':
+							self.sess_encrypt_mode[name] = AES.MODE_CBC
+						elif _em == 'aes-128-cfb':
+							self.sess_encrypt_mode[name] = AES.MODE_CFB
+						elif _em == 'on' or _em == 'aes-128-ecb':
+							self.sess_encrypt_mode[name] = AES.MODE_ECB
+							if name not in self.aes:
+								self.aes[name] = AES.new(self.e_token[name], AES.MODE_ECB)
+				if len(v) > 6:
+					if v[6]:
+						self.peer_ip[name] = v[6]
 						self.client_session[name] = True
-						if v[6]:
-							self.peer_port[name] = int(v[6])
+						if v[7]:
+							self.peer_port[name] = int(v[7])
 						else:
 							self.peer_port[name] = 9000
-				if len(v) > 7:
+				if len(v) > 8:
 					self.tun_route[name] = []
-					for route in v[7].split(','):
+					for route in v[8].split(','):
 						if route:
 							self.tun_route[name].append(route)
 
@@ -3103,17 +3214,25 @@ class _xWHandler:
 	def init_handler(self):
 		pass
 
-	def connect_udt_server(self, target):
+	def connect_udt_server(self, target, new_port=None):
 		sock = udt.UdtSocket()
 		sock.setsockopt(udt4.UDT_RCVBUF, self.server.recv_buf_size) #default 10MB
 		sock.setsockopt(udt4.UDT_SNDBUF, self.server.send_buf_size) #default 10MB
+		if new_port:
+			_port = new_port
+			_allow_redirect = 0
+		else:
+			_port = self.peer_port[target]
+			_allow_redirect = 1
+
 		try:
-			sock.connect((self.peer_ip[target], self.peer_port[target]))
+			#print "connecting udt server", self.peer_ip[target], str(_port)
+			sock.connect((self.peer_ip[target], _port))
 		except:
 			sock.close()
 			raise
 			return
-		_c_str = ''.join([target, ':', self.peer_ip[target]])
+		_c_str = ''.join([target, ':', self.peer_ip[target], ':', str(_port), ':', str(_allow_redirect)])
 		sock.send(struct.pack('i', len(_c_str)))
 		sock.send(_c_str)
 		try:
@@ -3121,6 +3240,7 @@ class _xWHandler:
 			_my_ip = sock.recv(_len)
 		except:
 			sock.close()
+			raise
 			return
 		#the _s_token used to verify the two sides has 4 factors: session_name, passwd(token), server_ip, client_ip
 		#this should be able to prevent from middleman attack & fake connect attempt
@@ -3132,11 +3252,22 @@ class _xWHandler:
 			_result = struct.unpack('i', sock.recv(4))[0]
 		except:
 			sock.close()
+			raise
 			return
 		if _result == 0:
-			self.setup_tunnel(target, sock, (self.peer_ip[target], self.peer_port[target]))
+			self.setup_tunnel(target, sock, (self.peer_ip[target], _port))
 			self.connected[target] = True
 			self.server.conns[sock.UDTSOCKET.UDTSOCKET] = sock
+			self.server.udt_conns_cnt[self.server._worker_id].value += 1
+		elif _result == 1:
+			_len = struct.unpack('i', sock.recv(4))[0]
+			_new_port_str = sock.recv(_len)
+			sock.close()
+
+			t = threading.Thread(target=self.connect_udt_server, args=(target,int(_new_port_str)))
+			t.daemon = True
+			t.start()
+			self.server.udt_ts.append(t)
 
 	def setup_tunnel(self, session_name, conn, addr): #stst
 		try:
@@ -3144,13 +3275,16 @@ class _xWHandler:
 				return
 
 			_tun = None
-			_tun = pytun.TunTapDevice(name=session_name, flags=pytun.IFF_TUN|pytun.IFF_NO_PI)
+			_tun_name = ''.join([session_name, '.', str(self.server._worker_id)])
+			_tun = pytun.TunTapDevice(name=_tun_name, flags=pytun.IFF_TUN|pytun.IFF_NO_PI)
 
 			_tun.addr = self.tun_local_ip[session_name]
 			_tun.dstaddr = self.tun_peer_ip[session_name]
 
 			_tun.netmask = '255.255.255.255'
 			_tun.mtu = self.tun_mtu[session_name]
+
+			subprocess.call(['ip', 'route', 'del', ''.join([_tun.dstaddr, '/', _tun.netmask])])
 
 			self.server.zsess[session_name] = (_tun, conn , addr)
 			self.server.ztuns[_tun.fileno()] = _tun
@@ -3160,47 +3294,53 @@ class _xWHandler:
 
 			conn.setblocking(False)
 
-			if not self.server.epoll:
-				self.server.epoll = select.epoll()
-				self.server.epoll.register(_tun.fileno(), select.EPOLLIN)
-				t = threading.Thread(target=self.server.handle_event_tun, args=())
+			_m = _tun.fileno() % self.server.udt_thread_limit
+			if self.server.epolls[_m] is None:
+				self.server.epolls[_m] = select.epoll()
+				self.server.epolls[_m].register(_tun.fileno(), select.EPOLLIN)
+				t = threading.Thread(target=self.server.handle_event_tun, args=(_m,))
+				t.daemon = True
 				t.start()
+				self.server.udt_ts.append(t)
 			else:
-				self.server.epoll.register(_tun.fileno(), select.EPOLLIN)
+				self.server.epolls[_m].register(_tun.fileno(), select.EPOLLIN)
 
-			if not self.server.upoll:
-				self.server.upoll = udt.Epoll()
-				self.server.upoll.add_usock(conn, udt4.UDT_EPOLL_IN)
-				t = threading.Thread(target=self.server.handle_event_udt, args=())
+			_n = conn.UDTSOCKET.UDTSOCKET % self.server.udt_thread_limit
+			if self.server.upolls[_n] is None:
+				self.server.upolls[_n] = udt.Epoll()
+				self.server.upolls[_n].add_usock(conn, udt4.UDT_EPOLL_IN)
+				t = threading.Thread(target=self.server.handle_event_udt, args=(_n,))
+				t.daemon = True
 				t.start()
+				self.server.udt_ts.append(t)
 			else:
-				self.server.upoll.add_usock(conn, udt4.UDT_EPOLL_IN)
+				self.server.upolls[_n].add_usock(conn, udt4.UDT_EPOLL_IN)
 
-			subprocess.call(['ip', 'link', 'set', session_name, 'txqueuelen', str(self.tun_txqueue[session_name])])
+			subprocess.call(['ip', 'link', 'set', _tun_name, 'txqueuelen', str(self.tun_txqueue[session_name])])
 
 			if session_name in self.tun_route:
 				if self.tun_route[session_name]:
 					for route in self.tun_route[session_name]:
 						subprocess.call(['ip', 'route', 'del', route])
-						subprocess.call(['ip', 'route', 'add', route, 'dev', session_name])
+						subprocess.call(['ip', 'route', 'add', route, 'dev', _tun_name])
 		except:
 			if conn:
-				if self.server.upoll:
-					try:
-						self.server.upoll.remove_usock(conn)
-					except:
-						pass
+				try:
+					if self.server.upolls[conn.UDTSOCKET.UDTSOCKET % self.server.udt_thread_limit]:
+						self.server.upolls[conn.UDTSOCKET.UDTSOCKET % self.server.udt_thread_limit].remove_usock(conn)
+				except:
+					pass
 				try:
 					conn.close()
 					del conn
 				except:
 					pass
 			if _tun:
-				if self.server.epoll:
-					try:
-						self.server.epoll.unregister(_tun.fileno())
-					except:
-						pass
+				try:
+					if self.server.epolls[_tun.fileno() % self.server.udt_thread_limit]:
+						self.server.epolls[_tun.fileno() % self.server.udt_thread_limit].unregister(_tun.fileno())
+				except:
+					pass
 				try:
 					_tun.down()
 					_tun.close()
@@ -3211,26 +3351,28 @@ class _xWHandler:
 				
 	def destroy_tunnel(self, session_name):
 		_tun, _conn, _addr = self.server.zsess.pop(session_name, (None, None, None))
+
 		self.connected.pop(session_name, None)
 		
-		print "destroying", session_name, _tun, _conn, _addr
+		print "destroying", ''.join([session_name, '.', str(self.server._worker_id)]), _tun, _conn, _addr
 
 		if _tun and _conn and _addr:
 			self.server.ztuns.pop(_tun.fileno(), None)
 			self.server.s_tuns.pop(_tun.fileno(), None)
 			self.server.s_udts.pop(_conn.UDTSOCKET.UDTSOCKET, None)
+			self.server.udt_conns_cnt[self.server._worker_id].value -= 1
 
-			if self.server.epoll:
-				try:
-					self.server.epoll.unregister(_tun.fileno())
-				except:
-					pass
+			try:
+				if self.server.epolls[_tun.fileno() % self.server.udt_thread_limit]:
+					self.server.epolls[_tun.fileno() % self.server.udt_thread_limit].unregister(_tun.fileno())
+			except:
+				pass
 
-			if self.server.upoll:
-				try:
-					self.server.upoll.remove_usock(_conn)
-				except:
-					pass
+			try:
+				if self.server.upolls[u.UDTSOCKET.UDTSOCKET % self.server.udt_thread_limit]:
+					self.server.upolls[u.UDTSOCKET.UDTSOCKET % self.server.udt_thread_limit].remove_usock(_conn)
+			except:
+				pass
 
 			try:
 				_tun.down()
@@ -3253,7 +3395,7 @@ class _xWHandler:
 			_len = struct.unpack('i', conn.recv(4))[0]
 			if _len > 0:
 				_c_str = conn.recv(_len)
-				_session_name, _my_ip = _c_str.split(':',1)
+				_session_name, _my_ip, _my_port_str, _allow_redirect_str = _c_str.split(':',3)
 				_peer_ip, _peer_port = addr
 				
 				if _session_name not in self.session:
@@ -3268,13 +3410,31 @@ class _xWHandler:
 						_s_token = conn.recv(_len)
 
 						if _s_token == self.encrypt_token(self.e_token[_session_name], ''.join([_my_ip, '#', _peer_ip])):
-							#pass, tell client, setup the tunnel, put conn in epoll
-							conn.send(struct.pack('i', 0))
-							if _session_name in self.connected:
-								#only one tunnel per session
-								self.destroy_tunnel(_session_name)
-							self.setup_tunnel(_session_name, conn, addr)
-							self.connected[_session_name] = True
+							#pass, check idle worker
+							if _allow_redirect_str == '1':
+								#this value changed at every connection time
+								#_idle_port = self.server.wdd_idle_worker(int(_my_port_str))
+
+								#this value fixed for about 20 secs
+								_idle_port = self.server.udt_conn_port.value
+							else:
+								_idle_port = int(_my_port_str)
+
+							if _idle_port == int(_my_port_str):
+								#tell client, setup the tunnel, put conn in epoll
+								conn.send(struct.pack('i', 0))
+								if _session_name in self.connected:
+									#only one tunnel per session
+									self.destroy_tunnel(_session_name)
+								self.setup_tunnel(_session_name, conn, addr)
+								self.connected[_session_name] = True
+								self.server.udt_conns_cnt[self.server._worker_id].value += 1
+							else:
+								#send redirect msg
+								conn.send(struct.pack('i', 1))
+								conn.send(struct.pack('i', len(str(_idle_port))))
+								conn.send(str(_idle_port))
+								conn.close()
 						else:
 							#sorry
 							conn.close()
@@ -3302,8 +3462,19 @@ class _xWHandler:
 					_buf = None
 
 				if _buf:
-					if self.encrypt:
-						_buf = self.aes[_session].encrypt(pad(_buf))
+					if self.encrypt or _session in self.sess_encrypt_mode:
+						if _session in self.sess_encrypt_mode:
+							_encrypt_mode = self.sess_encrypt_mode[_session]
+						else:
+							_encrypt_mode = self.encrypt_mode
+
+						if _encrypt_mode == AES.MODE_CBC or _encrypt_mode == AES.MODE_CFB:
+							iv = Random.new().read(BS)
+							self.aes[_session] = AES.new(self.e_token[_session], _encrypt_mode, iv)
+							_buf = ''.join([iv, self.aes[_session].encrypt(pad(_buf))])
+						else:
+							_buf = self.aes[_session].encrypt(pad(_buf))
+
 					try:
 						_conn.send(_buf)
 					except udt4.UDTException as e:
@@ -3313,8 +3484,8 @@ class _xWHandler:
 								self.server.udt_send_buf[_session].append(_buf)
 							else:
 								self.server.udt_send_buf[_session] = [_buf]
-							self.server.upoll.remove_usock(_conn)
-							self.server.upoll.add_usock(_conn, udt4.UDT_EPOLL_IN|udt4.UDT_EPOLL_OUT)
+							self.server.upolls[_conn.UDTSOCKET.UDTSOCKET % self.server.udt_thread_limit].remove_usock(_conn)
+							self.server.upolls[_conn.UDTSOCKET.UDTSOCKET % self.server.udt_thread_limit].add_usock(_conn, udt4.UDT_EPOLL_IN|udt4.UDT_EPOLL_OUT)
 
 	def handle_udt_events(self, usocks, rw_mode):
 		BS = AES.block_size
@@ -3328,11 +3499,21 @@ class _xWHandler:
 				except:
 					_buf = None
 					if u.getsockstate() > 5:
-						self.server.upoll.remove_usock(u)
+						self.server.upolls[u.UDTSOCKET.UDTSOCKET % self.server.udt_thread_limit].remove_usock(u)
 
 				if _buf:
-					if self.encrypt:
-						_buf = unpad(self.aes[_session].decrypt(_buf))
+					if self.encrypt or _session in self.sess_encrypt_mode:
+						if _session in self.sess_encrypt_mode:
+							_encrypt_mode = self.sess_encrypt_mode[_session]
+						else:
+							_encrypt_mode = self.encrypt_mode
+
+						if _encrypt_mode == AES.MODE_CBC or _encrypt_mode == AES.MODE_CFB:
+							self.aes[_session] = AES.new(self.e_token[_session], _encrypt_mode, _buf[:BS])
+							_buf = unpad(self.aes[_session].decrypt(_buf[BS:]))
+						else:
+							_buf = unpad(self.aes[_session].decrypt(_buf))
+
 					self.server.zsess[_session][0].write(_buf)
 
 		if rw_mode == 1:
@@ -3347,5 +3528,5 @@ class _xWHandler:
 					except:
 						pass
 				else:
-					self.server.upoll.remove_usock(u)
-					self.server.upoll.add_usock(u, udt4.UDT_EPOLL_IN)
+					self.server.upolls[u.UDTSOCKET.UDTSOCKET % self.server.udt_thread_limit].remove_usock(u)
+					self.server.upolls[u.UDTSOCKET.UDTSOCKET % self.server.udt_thread_limit].add_usock(u, udt4.UDT_EPOLL_IN)
