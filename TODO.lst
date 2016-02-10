@@ -10,5 +10,5 @@
 
 3wdd - multi processes mode when more than 1 worker, avoild GIL issue and take full power of multi-cores
        corresponding to worker_id, port number varied from 9000 to 9001, 9002...
-       load-balance amount 9000-900x with least connection policy.
+       load-balance amount 9000-900x with period-least-connections policy.
        (working..done server part..done client part..optimizing..)
