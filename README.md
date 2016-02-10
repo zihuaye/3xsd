@@ -1,7 +1,7 @@
 ##3xsd
 3xsd is a native epoll server serving TCP/UDP connections, a high performance static web server, a
 failover dns server, a http-based distributed file server, a load-balance proxy-cache server, and
-a 'warp drive' server.
+a 'warp drive' server. Written in python, take the full power of multi-cores.
 
 ##Features in detail:
 
@@ -29,7 +29,7 @@ a 'warp drive' server.
         better congestion control than TCP/UDP over wan link,
         better thoughput(above 80%) over wan link,
         tunnel ip/mtu/txqueuelen/route define,
-        encrypt packages through AES-128-ECB(CBC/CFB coming)
+        encrypt packages through AES-128-ECB/CBC/CFB
 
 More to find in .conf file.
 
