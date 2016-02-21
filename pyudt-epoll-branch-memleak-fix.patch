@@ -1,0 +1,31 @@
+*** src/py-udt4-epoll.cc	Sat Feb  8 15:18:16 2014
+--- src/py-udt4-epoll.cc.vi	Sat Feb 20 22:06:27 2016
+***************
+*** 215,221 ****
+          }
+  
+  
+!         return Py_BuildValue("OOOO", uset.read, uset.write,
+                                       sset.read, sset.write);
+  }
+  
+--- 215,221 ----
+          }
+  
+  
+!         return Py_BuildValue("NNNN", uset.read, uset.write,
+                                       sset.read, sset.write);
+  }
+  
+*** src/py-udt4.hh	Sat Feb  8 15:18:16 2014
+--- src/py-udt4.hh.vi	Sat Feb 20 22:07:47 2016
+***************
+*** 32,37 ****
+--- 32,38 ----
+                  UDT::getlasterror().clear();\
+                  \
+                  PyErr_SetObject(pyudt4_exception_obj, __obj);\
++                 Py_DECREF(__obj);\
+                  return 0x0;\
+          } while (0)
+  
