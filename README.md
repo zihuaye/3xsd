@@ -82,7 +82,7 @@ If you want to use 3wdd, python-pytun, pyudt4, pycrypto are also needed.
 
        yum install python-crypto2.6
 
-will quickly install pycrypto. The other two depended on pip install.
+will quickly install pycrypto(probably do some 'linking' works). The other two depended on pip install.
 
 Or, of cause you can let pip do it all for you:
 
