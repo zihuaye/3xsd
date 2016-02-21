@@ -6,5 +6,5 @@
        and:
          cd PyUDT-epoll-fixes/
          patch -p0 < pyudt-epoll-branch-memleak-fix.patch
-         python ./setup build
-         python ./setup install
+         python ./setup.py build
+         python ./setup.py install
