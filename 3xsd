@@ -288,7 +288,7 @@ if __name__ == "__main__":
 	else:
 		_socket_type = type(_3xsd.Server.socket)
 
-	print program_name, "serving at port:", _3xsd.Port, ", master pid:", os.getpid(), ", max conns:", _3xsd.Conns.size, ", backlog:", _3xsd.Backlog, ", workers:", _3xsd.Workers, ", server_mode:", server_mode, ", handler:", _3xsd.Handler, ", version:", _3xsd.__version__, ", socket:", _socket_type, ", lib:", _3xsd.__file__
+	print program_name, "serving at port:", _3xsd.Port, ", master pid:", os.getpid(), ", max conns:", _3xsd.Conns.size, ", backlog:", _3xsd.Backlog, ", workers:", _3xsd.Workers, ", server_mode:", server_mode, ", handler:", _3xsd.Handler, ", version:", _3xsd.__version__, ", socket:", _socket_type, ", lib:", _3xsd.__file__, ", python_version:", sys.version.split(' ',1)[0]
 	
 	if uname is not None:
 		#set specific uid and gid of process
@@ -402,3 +402,4 @@ if __name__ == "__main__":
 		_3xsd.Server._stopped_event.clear()
 		_3xsd.Server.start_accepting()
 		_3xsd.Server._stopped_event.wait()
+
