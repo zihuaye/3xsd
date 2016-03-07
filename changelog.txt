@@ -1,3 +1,18 @@
+v0.0.20  2016.03.07
+
+fixed:
+  3wdd memory leak issue under centos6.x/python 2.6/2.7
+
+       to fix this issue, use the pyudt-epoll-branch-memleak-fix.patch file with pyudt epoll-fixes branch
+       and:
+         cd PyUDT-epoll-fixes/
+         patch -p0 < pyudt-epoll-branch-memleak-fix.patch
+         python ./setup.py build
+         python ./setup.py install
+         
+optimized:
+  3wdd tun & udt socket use the same epoll, and the same handling thread
+  
 v0.0.19  2016.02.10
 
 unfixed:
