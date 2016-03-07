@@ -1,10 +1,1 @@
 3wdd - optimizing..
-
-3wdd - attempt to solve the memory leak under centos 6 issue.. fixed
-
-       to fix this issue, use the pyudt-epoll-branch-memleak-fix.patch file with pyudt epoll-fixes branch
-       and:
-         cd PyUDT-epoll-fixes/
-         patch -p0 < pyudt-epoll-branch-memleak-fix.patch
-         python ./setup.py build
-         python ./setup.py install
