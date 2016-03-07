@@ -25,11 +25,11 @@ a 'warp drive' server. Written in python, take the full power of multi-cores.
        in proxy mode, file redundancy, file persistent caching
 
 ###3wdd - 'warp drive' server
-        supporting: data tunneling over UDT and tun,
-        better congestion control than TCP/UDP over wan link,
-        better thoughput(above 80%) over wan link,
-        tunnel ip/mtu/txqueuelen/route define, auto create/recreate/destroy
-        encrypt packages through AES-128-ECB/CBC/CFB
+	supporting: data tunneling over UDT and tun,
+	better congestion control than TCP/UDP over wan link,
+	better thoughput(above 80%) over wan link,
+	tunnel ip/mtu/txqueuelen/route define, auto create/recreate/destroy
+	encrypt packages through AES-128-ECB/CBC/CFB
 
 More to find in .conf file.
 
@@ -98,7 +98,7 @@ Python Packages(Modules) version reference:
        pysendfile==2.0.1
        setproctitle==1.0.1
        psutil==0.6.1
-       dpkt==1.6(1.8.2)
+       dpkt==1.6(1.8.6)
        python-pytun==2.2.1
        pyudt4==0.6.0(epoll-fixes branch)
        pycrypto==2.6.1
@@ -110,3 +110,4 @@ To install a module of specific version(like gevent 0.13.8), you can:
 This will install the latest version of gevent(pypy will need it):
 
        pip install git+git://github.com/surfly/gevent.git#egg=gevent
+
