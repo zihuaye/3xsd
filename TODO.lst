@@ -1,1 +1,3 @@
 3wdd - optimizing..
+      now UDT tunnel performing 50%-60% speed of direct TCP connection
+      and package lost rate remaining below 0.6%
