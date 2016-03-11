@@ -1,7 +1,7 @@
 v0.0.20  2016.03.11
 
 fixed:
-  3wdd tunnel extremly slow issue - update the pyudt-epoll-branch-memleak-ccc-fix.patch file.
+  3wdd udt tunnel extremly slow issue - update the pyudt-epoll-branch-memleak-ccc-fix.patch file.
   codes coming at v0.0.21
   
 v0.0.20  2016.03.07
