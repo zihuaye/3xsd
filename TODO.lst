@@ -1,3 +1,4 @@
 3wdd - optimizing..
       now UDT tunnel performing 50%-60% speed of direct TCP connection
-      and package lost rate remaining below 0.6%
+      and package lost rate remaining below 0.6% 
+      (CN-US WAN link with 150ms-250ms latency, through CUCN submarine cable)
