@@ -1,4 +1,4 @@
-3wdd - optimizing..
+3wdd - optimizing & steadying..
       now UDT tunnel performing 50%-60% speed of direct TCP connection(with ZetaTCP)
       and package lost rate remaining below 0.6%(while direct connection has 1.4%-3%)
       (CN-US WAN link with 150ms-250ms latency, through the always-jammed CUCN submarine cable)
