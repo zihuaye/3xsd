@@ -18,10 +18,20 @@
   }
   
 *** src/py-udt4.hh	Sat Feb  8 15:18:16 2014
---- src/py-udt4.hh.vi	Thu Mar 10 17:52:17 2016
+--- src/py-udt4.hh.vi	Thu Mar 10 18:37:51 2016
+***************
+*** 10,15 ****
+--- 10,16 ----
+  
+  #include <Python.h>
+  #include <udt>
++ #include <ccc.h>
+  
+  /**
+          @macro RETURN_UDT_RUNTIME_ERROR
 ***************
 *** 32,38 ****
---- 32,55 ----
+--- 33,56 ----
                   UDT::getlasterror().clear();\
                   \
                   PyErr_SetObject(pyudt4_exception_obj, __obj);\
