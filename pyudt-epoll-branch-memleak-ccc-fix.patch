@@ -1,0 +1,61 @@
+*** src/py-udt4-epoll.cc	Sat Feb  8 15:18:16 2014
+--- src/py-udt4-epoll.cc.vi	Sat Feb 20 22:06:27 2016
+***************
+*** 215,221 ****
+          }
+  
+  
+!         return Py_BuildValue("OOOO", uset.read, uset.write,
+                                       sset.read, sset.write);
+  }
+  
+--- 215,221 ----
+          }
+  
+  
+!         return Py_BuildValue("NNNN", uset.read, uset.write,
+                                       sset.read, sset.write);
+  }
+  
+*** src/py-udt4.hh	Sat Feb  8 15:18:16 2014
+--- src/py-udt4.hh.vi	Thu Mar 10 17:52:17 2016
+***************
+*** 32,38 ****
+--- 32,55 ----
+                  UDT::getlasterror().clear();\
+                  \
+                  PyErr_SetObject(pyudt4_exception_obj, __obj);\
++                 Py_DECREF(__obj);\
+                  return 0x0;\
+          } while (0)
+  
++ class CUDPBlast: public CCC
++ {
++ public:
++    CUDPBlast()
++    {
++       m_dPktSndPeriod = 100.0;
++       m_dCWndSize = 83333.0;
++    }
++ 
++ public:
++    void setRate(double mbps)
++    {
++       m_dPktSndPeriod = (m_iMSS * 8.0) / mbps;
++    }
++ };
++ 
+  #endif // __PY_UDT_H_
+*** src/py-udt4.cc	Sat Feb  8 15:18:16 2014
+--- src/py-udt4.cc.vi	Thu Mar 10 17:51:49 2016
+***************
+*** 446,451 ****
+--- 446,453 ----
+                  RETURN_UDT_RUNTIME_ERROR;
+          }
+  
++         UDT::setsockopt(sock->sock, 0, UDT_CC, new CCCFactory<CUDPBlast>, sizeof(CCCFactory<CUDPBlast>));
++ 
+          return (PyObject*) sock;
+  }
+  
