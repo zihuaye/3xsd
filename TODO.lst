@@ -4,4 +4,4 @@
       and package lost rate remaining below 0.6%(while direct connection has 1.4%-3%)
       (CN-US WAN link with 150ms-250ms latency, through the always-jammed CUCN submarine cable)
       
-      udt & tun handling loop major rewrite, cpu consumption rate decrease 0.6%
+      UDT & TUN handling loop major rewrite, cpu consumption rate decrease 0.6%
