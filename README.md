@@ -62,7 +62,8 @@ More to find in .conf file.
   (Test CN-US WAN link with 150ms-280ms latency, through the always-jammed CUCN submarine cable)
   However, UDT tunnel beats normal TCP connection without ZetaTCP, with 30%-50% outperforming.(v)
   (Test link like above)
-
+  And an encrypted UDT tunnel will has 50% performance decrease.
+  
 ###More performance:
 There are at lease two ways to increase the performance of 3xsd:
 
