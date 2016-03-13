@@ -13,7 +13,7 @@
 # All 3 party modules copyright go to their authors(see their licenses).
 #
 
-__version__ = "0.0.20"
+__version__ = "0.0.21"
 
 import os, sys, io, time, calendar, random, multiprocessing, threading
 import shutil, mmap, sendfile, zlib, gzip, copy, setproctitle
@@ -29,6 +29,7 @@ from distutils.version import StrictVersion
 from Crypto.Cipher import AES
 from Crypto import Random
 #from meliae import scanner
+#import binascii
 
 import gc
 #gc.set_debug(gc.DEBUG_STATS)
@@ -145,8 +146,8 @@ class _Z_EpollServer(StreamServer):
 			self.send_buf_size = send_buf_size
 		elif udt:
 			#this buffer size is about 100Mbps bandwidth between CN&US(Bandwidth*RTT/8)
-			self.recv_buf_size = 2621440
-			self.send_buf_size = 2621440
+			self.recv_buf_size = 2760000
+			self.send_buf_size = 2760000
 
 			#udt not work with reuse_port option
 			self.reuse_port = False
@@ -223,7 +224,6 @@ class _Z_EpollServer(StreamServer):
 				self.socket.setsockopt(udt4.UDT_RCVBUF, self.recv_buf_size) #default 10MB
 				self.socket.setsockopt(udt4.UDT_SNDBUF, self.send_buf_size) #default 10MB
 				#self.socket.setsockopt(udt4.UDT_MSS, 9000)    #default 1500
-				self.socket.setsockopt(udt4.UDT_MSS, 1380)
 
 				if self.workers > 0:
 					_ip, _port = self.address
@@ -559,7 +559,7 @@ class _Z_EpollServer(StreamServer):
 			self.cleanupall()
 			self.socket.close()		
 
-	def handle_event_udt_tun(self, index): #uuu
+	def handle_event_udt_tun(self, index):
 		try:
 			while 1:
 				sets = None
@@ -574,6 +574,36 @@ class _Z_EpollServer(StreamServer):
 			if sets:
 				del sets
 			raise
+
+	def forward_tun_udt(self, _tun, _usock, _encrypt_mode, _session):
+		try:
+			while 1:
+				r = [_tun]; w = []; x = []; _b = None
+				r, w, x = select.select(r, w, x, 5.0)
+				if r:
+					_b = _tun.read(_tun.mtu)
+					if _b:
+						if _encrypt_mode:
+							_b = self.handler.encrypt_package(_b, _encrypt_mode, _session)
+						_usock.send(''.join([struct.pack('i', len(_b)), _b]))
+				else:
+					if _tun.fileno() == -1:
+						print "Thread forward_tun_udt exit.."
+						break
+		except:
+			print "Thread forward_tun_udt exit.."
+
+	def forward_udt_tun(self, _tun, _usock, _encrypt_mode, _session):  #uuu
+		try:
+			while 1:
+				_len = struct.unpack('i', _usock.recv(4))[0]
+				if _len > 0:
+					if _encrypt_mode:
+						_tun.write(self.handler.decrypt_package(_usock.recv(_len), _encrypt_mode, _session))
+					else:
+						_tun.write(_usock.recv(_len))
+		except:
+			print "Thread forward_udt_tun exit.."
 
 	def check_3wd(self): #333
 		try:
@@ -613,8 +643,8 @@ class _Z_EpollServer(StreamServer):
 								if _usock.getsockstate() > 5:	#connection gone
 									self.handler.destroy_tunnel(_session)
 
-							#if os.path.exists('/tmp/usock_stat'):
-							#	udt4.dump_perfmon(_usock.perfmon())
+							if os.path.exists('/tmp/usock_stat'):
+								udt4.dump_perfmon(_usock.perfmon())
 
 					if self.workers > 1:
 						self.wdd_idle_worker(9000)
@@ -3190,13 +3220,14 @@ class _xWHandler:
 			_port = self.peer_port[target]
 			_allow_redirect = 1
 
+		_peer_ip = socket.gethostbyname(self.peer_ip[target])
 		try:
 			#print "connecting udt server", self.peer_ip[target], str(_port)
-			sock.connect((self.peer_ip[target], _port))
+			sock.connect((_peer_ip, _port))
 		except:
 			sock.close()
 			return
-		_c_str = ''.join([target, ':', self.peer_ip[target], ':', str(_port), ':', str(_allow_redirect)])
+		_c_str = ''.join([target, ':', _peer_ip, ':', str(_port), ':', str(_allow_redirect)])
 		sock.send(struct.pack('i', len(_c_str)))
 		sock.send(_c_str)
 		try:
@@ -3207,7 +3238,7 @@ class _xWHandler:
 			return
 		#the _s_token used to verify the two sides has 4 factors: session_name, passwd(token), server_ip, client_ip
 		#this should be able to prevent from middleman attack & fake connect attempt
-		_s_token = self.encrypt_token(self.e_token[target], ''.join([self.peer_ip[target], '#', _my_ip]))
+		_s_token = self.encrypt_token(self.e_token[target], ''.join([_peer_ip, '#', _my_ip]))
 		sock.send(struct.pack('i', len(_s_token)))
 		sock.send(_s_token)
 		try:
@@ -3217,7 +3248,7 @@ class _xWHandler:
 			sock.close()
 			return
 		if _result == 0:
-			self.setup_tunnel(target, sock, (self.peer_ip[target], _port))
+			self.setup_tunnel(target, sock, (_peer_ip, _port))
 			self.connected[target] = True
 			self.server.udt_conns_cnt[self.server._worker_id].value += 1
 		elif _result == 1:
@@ -3252,6 +3283,7 @@ class _xWHandler:
 
 			_tun.up()
 
+			"""
 			flag = fcntl.fcntl(_tun.fileno(), fcntl.F_GETFL)
     			fcntl.fcntl(_tun.fileno(), fcntl.F_SETFL, flag | os.O_NONBLOCK)
 
@@ -3268,6 +3300,23 @@ class _xWHandler:
 			else:
 				self.server.upolls[_n].add_usock(conn, udt4.UDT_EPOLL_IN)
 				self.server.upolls[_n].add_ssock(_tun, udt4.UDT_EPOLL_IN)
+			"""
+
+			if self.encrypt or session_name in self.sess_encrypt_mode:
+				if session_name in self.sess_encrypt_mode:
+					_encrypt_mode = self.sess_encrypt_mode[session_name]
+				else:
+					_encrypt_mode = self.encrypt_mode
+			else:
+				_encrypt_mode = None
+
+			t = threading.Thread(target=self.server.forward_tun_udt,args=(_tun,conn,_encrypt_mode,session_name,))
+			t.daemon = True
+			t.start()
+
+			t = threading.Thread(target=self.server.forward_udt_tun,args=(_tun,conn,_encrypt_mode,session_name,))
+			t.daemon = True
+			t.start()
 
 			subprocess.call(['ip', 'link', 'set', _tun_name, 'txqueuelen', str(self.tun_txqueue[session_name])])
 
@@ -3278,22 +3327,26 @@ class _xWHandler:
 						subprocess.call(['ip', 'route', 'add', route, 'dev', _tun_name])
 		except:
 			if conn:
+				"""
 				try:
 					if self.server.upolls[conn.UDTSOCKET.UDTSOCKET % self.server.udt_thread_limit]:
 						self.server.upolls[conn.UDTSOCKET.UDTSOCKET % self.server.udt_thread_limit].remove_usock(conn)
 				except:
 					pass
+				"""
 				try:
 					conn.close()
 					del conn
 				except:
 					pass
 			if _tun:
+				"""
 				try:
 					if self.server.upolls[conn.UDTSOCKET.UDTSOCKET % self.server.udt_thread_limit]:
 						self.server.upolls[conn.UDTSOCKET.UDTSOCKET % self.server.udt_thread_limit].remove_ssock(_tun)
 				except:
 					pass
+				"""
 				try:
 					_tun.down()
 					_tun.close()
@@ -3317,7 +3370,7 @@ class _xWHandler:
 
 			if session_name in self.server.udt_send_buf:
 				self.server.udt_send_buf.pop(session_name)
-
+			"""
 			try:
 				_n = _conn.UDTSOCKET.UDTSOCKET % self.server.udt_thread_limit
 				if self.server.upolls[_n]:
@@ -3325,7 +3378,7 @@ class _xWHandler:
 					self.server.upolls[_n].remove_ssock(_tun)
 			except:
 				pass
-
+			"""
 			try:
 				_tun.down()
 				_tun.close()
@@ -3400,104 +3453,24 @@ class _xWHandler:
 					pass
 			raise
 
-	def handle_udt_tun_events(self, sets): #ooo
-		#BS = AES.block_size
-		#pad = lambda s: s + (BS - len(s) % BS) * chr(BS - len(s) % BS)
-		#pad = lambda s: ''.join([s, (BS - len(s) % BS) * chr(BS - len(s) % BS)])
-		#unpad = lambda s : s[0:-ord(s[-1])]
+	def decrypt_package(self, _buf, _encrypt_mode, _session):
+		BS = AES.block_size
+		unpad = lambda s : s[0:-ord(s[-1])]
 
-		if sets[0]:
-			unpad = lambda s : s[0:-ord(s[-1])]
-			for u in sets[0]:
-				if u.UDTSOCKET.UDTSOCKET in self.server.s_udts:
-					_session = self.server.s_udts[u.UDTSOCKET.UDTSOCKET]
-				else:
-					continue
+		if _encrypt_mode == AES.MODE_CBC or _encrypt_mode == AES.MODE_CFB:
+			_aes = AES.new(self.e_token[_session], _encrypt_mode, _buf[:BS])
+			return unpad(_aes.decrypt(_buf[BS:]))
+		else:
+			return unpad(self.aes[_session].decrypt(_buf))
 
-				try:
-					_buf = u.recv(self.server.recv_buf_size)
-				except udt4.UDTException as e:
-					_buf = None
-					if u.getsockstate() > 5:
-						self.server.upolls[u.UDTSOCKET.UDTSOCKET % self.server.udt_thread_limit].remove_usock(u)
 
-				if _buf:
-					_buf2 = _buf
-					if self.encrypt or _session in self.sess_encrypt_mode:
-						if _session in self.sess_encrypt_mode:
-							_encrypt_mode = self.sess_encrypt_mode[_session]
-						else:
-							_encrypt_mode = self.encrypt_mode
+	def encrypt_package(self, _buf, _encrypt_mode, _session):
+		BS = AES.block_size
+		pad = lambda s: ''.join([s, (BS - len(s) % BS) * chr(BS - len(s) % BS)])
 
-						if _encrypt_mode == AES.MODE_CBC or _encrypt_mode == AES.MODE_CFB:
-							_aes = AES.new(self.e_token[_session], _encrypt_mode, _buf[:BS])
-							_buf2 = unpad(_aes.decrypt(_buf[BS:]))
-						else:
-							_buf2 = unpad(self.aes[_session].decrypt(_buf))
-
-					try:
-						self.server.zsess[_session][0].write(_buf2)
-					except:
-						continue
-
-		if sets[1]:
-			for u in sets[1]:
-				if u.UDTSOCKET.UDTSOCKET in self.server.s_udts:
-					_session = self.server.s_udts[u.UDTSOCKET.UDTSOCKET]
-				else:
-					continue
-
-				if _session in self.server.udt_send_buf:
-					try:
-						u.send(self.server.udt_send_buf[_session][0])
-						_buf = self.server.udt_send_buf[_session].pop(0)
-						if len(self.server.udt_send_buf[_session]) == 0:
-							_sess = self.server.udt_send_buf.pop(_session, None)
-					except: 
-						if u.getsockstate() > 5:
-							self.server.udt_send_buf.pop(_session, None)
-							self.server.upolls[u.UDTSOCKET.UDTSOCKET % self.server.udt_thread_limit].remove_usock(u)
-				else:
-					self.server.upolls[u.UDTSOCKET.UDTSOCKET % self.server.udt_thread_limit].remove_usock(u)
-					self.server.upolls[u.UDTSOCKET.UDTSOCKET % self.server.udt_thread_limit].add_usock(u, udt4.UDT_EPOLL_IN)
-
-		if sets[2]:
-			pad = lambda s: ''.join([s, (AES.block_size - len(s) % AES.block_size) * chr(AES.block_size - len(s) % AES.block_size)])
-			for _tun in sets[2]:
-				if _tun.fileno() == -1:
-					continue
-
-				_session = self.server.s_tuns[_tun.fileno()]
-				_, _conn = self.server.zsess[_session][:2]
-
-				try:
-					_buf = _tun.read(self.server.recv_buf_size)
-				except:
-					_buf = None
-
-				if _buf:
-					_buf2 = _buf
-					if self.encrypt or _session in self.sess_encrypt_mode:
-						if _session in self.sess_encrypt_mode:
-							_encrypt_mode = self.sess_encrypt_mode[_session]
-						else:
-							_encrypt_mode = self.encrypt_mode
-
-						if _encrypt_mode == AES.MODE_CBC or _encrypt_mode == AES.MODE_CFB:
-							iv = Random.new().read(BS)
-							_aes = AES.new(self.e_token[_session], _encrypt_mode, iv)
-							_buf2 = ''.join([iv, _aes.encrypt(pad(_buf))])
-						else:
-							_buf2 = self.aes[_session].encrypt(pad(_buf))
-
-					try:
-						_conn.send(_buf2)
-					except udt4.UDTException as e:
-						if e[0] == udt4.EASYNCSND:
-							#send buffer full
-							if _session in self.server.udt_send_buf:
-								self.server.udt_send_buf[_session].append(_buf2)
-							else:
-								self.server.udt_send_buf[_session] = [_buf2]
-							self.server.upolls[_conn.UDTSOCKET.UDTSOCKET % self.server.udt_thread_limit].remove_usock(_conn)
-							self.server.upolls[_conn.UDTSOCKET.UDTSOCKET % self.server.udt_thread_limit].add_usock(_conn, udt4.UDT_EPOLL_IN|udt4.UDT_EPOLL_OUT)
+		if _encrypt_mode == AES.MODE_CBC or _encrypt_mode == AES.MODE_CFB:
+			_iv = Random.new().read(BS)
+			_aes = AES.new(self.e_token[_session], _encrypt_mode, _iv)
+			return ''.join([_iv, _aes.encrypt(pad(_buf))])
+		else:
+			return self.aes[_session].encrypt(pad(_buf))
