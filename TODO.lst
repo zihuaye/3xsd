@@ -1,12 +1,1 @@
-3wdd - optimizing & steadying..
-
-      UDT & TUN handling loop major rewrite, cpu consumption rate decrease 0.6%
-      
-      Now UDT tunnel performing 50%-60% speed of direct TCP connection with ZetaTCP,
-      and package lost rate remaining below 0.6%, while direct connection has 1.4%-3%.
-      (Test CN-US WAN link with 150ms-280ms latency, through the always-jammed CUCN submarine cable)
-      
-      However, UDT tunnel beats normal TCP connection without ZetaTCP, with 30%-50% outperforming.(v)
-      (Test link like above)
-      
-      And an encrypted UDT tunnel will has 50% performance decrease.
+3wdd - Tunnel on-the-fly compress function.
