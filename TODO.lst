@@ -8,3 +8,5 @@
       
       However, UDT tunnel beats normal TCP connection without ZetaTCP, with 30%-50% outperforming.(v)
       (Test link like above)
+      
+      And an encrypted UDT tunnel will has 50% performance decrease.
