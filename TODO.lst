@@ -1,1 +1,2 @@
 3wdd - Tunnel on-the-fly compress function.
+      Get 50% - 100%(average 75%) speed of ZetaTCP, depends on the content transfering.
