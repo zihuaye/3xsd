@@ -1,2 +1,3 @@
 3wdd - Tunnel on-the-fly compress function.
+      zlib & lzo support, lzo faster and lower CPU consumption, zlib get higher compress rate
       Get 50% - 100%(average 75%) speed of ZetaTCP, depends on the content transfering.
