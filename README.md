@@ -62,8 +62,9 @@ More to find in .conf file.
   UDT tunnel(no encrypt) performing 50%-60% speed of direct TCP connection with ZetaTCP,
   and package lost rate remaining below 0.6%, while direct connection has 1.4%-3%.
   (Test CN-US WAN link with 150ms-280ms latency, through the always-jammed CUCN submarine cable)
-  However, UDT tunnel beats normal TCP connection without ZetaTCP, with 30%-50% outperforming.(v)
-  (Test link like above)And an encrypted UDT tunnel will has 50% performance decrease.
+  However, UDT tunnel beats normal TCP connection without ZetaTCP, with 50% - 6 times
+  (commonly 1-2 times) outperforming.(v)(Test link like above)
+  And an encrypted UDT tunnel will has 50% performance decrease.
 
 ###More performance:
 There are at lease two ways to increase the performance of 3xsd:
