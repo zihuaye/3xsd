@@ -28,8 +28,7 @@ a 'warp drive' server. Written in python, take the full power of multi-cores.
        supporting: data tunneling over UDT and tun,
        better congestion control than TCP/UDP over wan link,
        better thoughput(above 80%) over wan link, refer to:
-       [Analysis and Application of UDT Protocol in Long-Distance High-Speed Networks]
-       (http://www.c-s-a.org.cn/ch/reader/create_pdf.aspx?file_no=20091035)
+       [Analysis and Application of UDT Protocol in Long-Distance High-Speed Networks](http://www.c-s-a.org.cn/ch/reader/create_pdf.aspx?file_no=20091035)
        tunnel ip/mtu/txqueuelen/route define, auto create/recreate/destroy
        encrypt packages through AES-128-ECB/CBC/CFB
        tunnel on-the-fly compress with zlib/lzo
