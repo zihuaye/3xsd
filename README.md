@@ -30,6 +30,7 @@ a 'warp drive' server. Written in python, take the full power of multi-cores.
 	better thoughput(above 80%) over wan link,
 	tunnel ip/mtu/txqueuelen/route define, auto create/recreate/destroy
 	encrypt packages through AES-128-ECB/CBC/CFB
+	tunnel on-the-fly compress with zlib/lzo
 
 More to find in .conf file.
 
@@ -61,9 +62,8 @@ More to find in .conf file.
   and package lost rate remaining below 0.6%, while direct connection has 1.4%-3%.
   (Test CN-US WAN link with 150ms-280ms latency, through the always-jammed CUCN submarine cable)
   However, UDT tunnel beats normal TCP connection without ZetaTCP, with 30%-50% outperforming.(v)
-  (Test link like above)
-  And an encrypted UDT tunnel will has 50% performance decrease.
-  
+  (Test link like above)And an encrypted UDT tunnel will has 50% performance decrease.
+
 ###More performance:
 There are at lease two ways to increase the performance of 3xsd:
 
@@ -84,7 +84,7 @@ Doing this before running the program(minimal requirement):
   
 Dpkt module is also needed when running 3nsd DNS server, pip install it.
 
-If you want to use 3wdd, python-pytun, pyudt4, pycrypto are also needed.
+If you want to use 3wdd, python-pytun, pyudt4, pycrypto, python-lzo are also needed.
 
        yum install python-crypto2.6
 

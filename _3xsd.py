@@ -13,13 +13,13 @@
 # All 3 party modules copyright go to their authors(see their licenses).
 #
 
-__version__ = "0.0.21"
+__version__ = "0.0.22"
 
 import os, sys, io, time, calendar, random, multiprocessing, threading
-import shutil, mmap, sendfile, zlib, gzip, copy, setproctitle
+import shutil, mmap, sendfile, zlib, gzip, lzo, copy, setproctitle
 import _socket as socket
 import select, errno, gevent, dpkt, ConfigParser, hashlib, struct, shelve
-import pytun, udt4, subprocess, fcntl
+import pytun, udt4, subprocess, fcntl, gc
 
 from udt4 import pyudt as udt
 from datetime import datetime
@@ -29,11 +29,6 @@ from distutils.version import StrictVersion
 from Crypto.Cipher import AES
 from Crypto import Random
 #from meliae import scanner
-#import binascii
-
-import gc
-#gc.set_debug(gc.DEBUG_STATS)
-#gc.set_debug(gc.DEBUG_LEAK)
 
 Port = 8000	#Listening port number
 Backlog = 1000	#Listening backlog
@@ -132,6 +127,7 @@ class _Z_EpollServer(StreamServer):
 	s_udts = {}   #sessions connected with udts
 	upolls = []   #the udt socket & tun epolls
 	udt_send_buf = {}
+	udt_send_buf_lock = None
 	udt_thread_limit = 0
 	udt_conns_cnt = {}
 	udt_conns_cnt_lock = None
@@ -575,35 +571,75 @@ class _Z_EpollServer(StreamServer):
 				del sets
 			raise
 
-	def forward_tun_udt(self, _tun, _usock, _encrypt_mode, _session):
+	def forward_tun_udt(self, _tun, _usock, _encrypt_mode, _compress, _session):  #uuu
+		if _compress == 'zlib':
+			_zip = lambda s: zlib.compress(s) if len(s) > 100 else s
+		elif _compress == 'lzo':
+			_zip = lambda s: lzo.compress(s) if len(s) > 100 else s
+		else:
+			_zip = lambda s : s
+
+		_repack = lambda s : ''.join([struct.pack('i', len(s)), s])
+
+		if _encrypt_mode:
+			_forward_it=lambda s : _usock.send(_repack(self.handler.encrypt_package(_zip(s), _encrypt_mode, _session)))
+		else:
+			_forward_it=lambda s : _usock.send(_repack(_zip(s)))
+
 		try:
 			while 1:
 				r = [_tun]; w = []; x = []; _b = None
-				r, w, x = select.select(r, w, x, 5.0)
+				r, w, x = select.select(r, w, x, 6.0)
 				if r:
-					_b = _tun.read(_tun.mtu)
-					if _b:
-						if _encrypt_mode:
-							_b = self.handler.encrypt_package(_b, _encrypt_mode, _session)
-						_usock.send(''.join([struct.pack('i', len(_b)), _b]))
+					_forward_it(_tun.read(_tun.mtu))
 				else:
 					if _tun.fileno() == -1:
+						#tunnel down
 						print "Thread forward_tun_udt exit.."
 						break
 		except:
 			print "Thread forward_tun_udt exit.."
+			raise
 
-	def forward_udt_tun(self, _tun, _usock, _encrypt_mode, _session):  #uuu
+	def forward_udt_tun(self, _tun, _usock, _encrypt_mode, _compress, _session):  #ttt
+		if _compress == 'zlib':
+			_magic_str = ''.join([chr(0x78), chr(0x9c)])  #[0x78,0x9C]
+			_magic_len = len(_magic_str)
+			_unzip = lambda s : zlib.decompress(s) if _magic_str in s[:_magic_len] else s
+		elif _compress == 'lzo':
+			_magic_str = ''.join([chr(0xf0), chr(0x0), chr(0x0)])  #[0x89,0x4C,0x5A,0x4F] ?
+			_magic_len = len(_magic_str)
+			_unzip = lambda s : lzo.decompress(s) if _magic_str in s[:_magic_len] else s
+		else:
+			_unzip = lambda s : s
+
+		if _encrypt_mode:
+			_forward_it = lambda s : _tun.write(_unzip(self.handler.decrypt_package(s, _encrypt_mode, _session)))
+		else:
+			_forward_it = lambda s : _tun.write(_unzip(s))
+
 		try:
 			while 1:
-				_len = struct.unpack('i', _usock.recv(4))[0]
-				if _len > 0:
-					if _encrypt_mode:
-						_tun.write(self.handler.decrypt_package(_usock.recv(_len), _encrypt_mode, _session))
-					else:
-						_tun.write(_usock.recv(_len))
+				_forward_it(_usock.recv(struct.unpack('i', _usock.recv(4))[0]))
 		except:
 			print "Thread forward_udt_tun exit.."
+			raise
+
+	def send_out_udt(self, _usock, _session):
+		while 1:
+			time.sleep(0.01)
+			while self.udt_send_buf[_session]:
+				try:
+					_usock.send(self.udt_send_buf[_session][0])
+					with self.udt_send_buf_lock:
+						self.udt_send_buf[_session].pop(0)
+				except udt4.UDTException as e:
+					if e[0] == udt4.EASYNCSND:
+						#udt send buffer full, sleep to re-send it next time
+						break
+					elif _usock.getsockstate() > 5:
+						print "Thread send_out_udt exit.."
+						return
 
 	def check_3wd(self): #333
 		try:
@@ -2633,7 +2669,7 @@ class _xZHandler(_xHandler, _xDNSHandler):
 					pass
 
 	def z_transfer_backend(self, _f):
-		#from backend ttt
+		#from backend
 		try:
 			_b = self.z_host_sock.recv(self.recv_buf_size)
 			if not _b:
@@ -3085,6 +3121,8 @@ class _xWHandler:
 	sess_encrypt_mode = {}
 	aes = {}
 
+	compress_tunnel = {}
+
 	session = {}
 	client_session = {}
 	connected = {}
@@ -3130,6 +3168,7 @@ class _xWHandler:
 		self.peer_ip = {}
 		self.peer_port = {}
 		self.tun_route = {}
+		self.compress_tunnel = {}
 
 		self.config = ConfigParser.ConfigParser()
 		if not self.config.read('3xsd.conf'):
@@ -3178,7 +3217,8 @@ class _xWHandler:
 								self.aes[name] = AES.new(self.e_token[name], AES.MODE_ECB)
 				if len(v) > 5:
 					if v[5]:
-						_em = v[5].lower()
+						_em_zip = v[5].lower().split(',')
+						_em = _em_zip[0]
 						if _em == 'aes-128-cbc':
 							self.sess_encrypt_mode[name] = AES.MODE_CBC
 						elif _em == 'aes-128-cfb':
@@ -3187,7 +3227,12 @@ class _xWHandler:
 							self.sess_encrypt_mode[name] = AES.MODE_ECB
 							if name not in self.aes:
 								self.aes[name] = AES.new(self.e_token[name], AES.MODE_ECB)
-				if len(v) > 6:
+						if len(_em_zip) > 1:
+							if _em_zip[1] == 'zlib' or _em_zip[1] == 'compress':
+								self.compress_tunnel[name] = 'zlib'
+							elif _em_zip[1] == 'lzo':
+								self.compress_tunnel[name] = 'lzo'
+				if len(v) > 7:
 					if v[6]:
 						self.peer_ip[name] = v[6]
 						self.client_session[name] = True
@@ -3195,9 +3240,9 @@ class _xWHandler:
 							self.peer_port[name] = int(v[7])
 						else:
 							self.peer_port[name] = 9000
-				if len(v) > 8:
+				if len(v) > 8 or len(v) == 7:
 					self.tun_route[name] = []
-					for route in v[8].split(','):
+					for route in v[len(v) - 1].split(','):
 						if route:
 							self.tun_route[name].append(route)
 
@@ -3275,7 +3320,8 @@ class _xWHandler:
 			_tun.netmask = '255.255.255.255'
 			_tun.mtu = self.tun_mtu[session_name]
 
-			subprocess.call(['ip', 'route', 'del', ''.join([_tun.dstaddr, '/', _tun.netmask])])
+			with open(os.devnull, 'w') as devnull:
+				subprocess.call(['ip', 'route', 'del', ''.join([_tun.dstaddr, '/', _tun.netmask])], stderr=devnull)
 
 			self.server.zsess[session_name] = (_tun, conn , addr)
 			self.server.ztuns[_tun.fileno()] = _tun
@@ -3310,21 +3356,40 @@ class _xWHandler:
 			else:
 				_encrypt_mode = None
 
-			t = threading.Thread(target=self.server.forward_tun_udt,args=(_tun,conn,_encrypt_mode,session_name,))
+			if session_name in self.compress_tunnel:
+				_compress = self.compress_tunnel[session_name]
+			else:
+				_compress = None
+
+			"""
+			conn.setblocking(False, True)
+			self.server.udt_send_buf[session_name] = []
+			self.server.udt_send_buf_lock = multiprocessing.Lock()
+			t = threading.Thread(target=self.server.send_out_udt,args=(conn,session_name,))
+			t.daemon = True
+			t.start()
+			"""
+
+			t = threading.Thread(target=self.server.forward_tun_udt,args=(_tun,conn,_encrypt_mode,_compress,session_name,))
 			t.daemon = True
 			t.start()
 
-			t = threading.Thread(target=self.server.forward_udt_tun,args=(_tun,conn,_encrypt_mode,session_name,))
+			t = threading.Thread(target=self.server.forward_udt_tun,args=(_tun,conn,_encrypt_mode,_compress,session_name,))
 			t.daemon = True
 			t.start()
 
-			subprocess.call(['ip', 'link', 'set', _tun_name, 'txqueuelen', str(self.tun_txqueue[session_name])])
+			with open(os.devnull, 'w') as devnull:
+				subprocess.call(['ip', 'link', 'set', _tun_name, 'txqueuelen', str(self.tun_txqueue[session_name])], stderr=devnull)
 
 			if session_name in self.tun_route:
 				if self.tun_route[session_name]:
-					for route in self.tun_route[session_name]:
-						subprocess.call(['ip', 'route', 'del', route])
-						subprocess.call(['ip', 'route', 'add', route, 'dev', _tun_name])
+					with open(os.devnull, 'w') as devnull:
+						for route in self.tun_route[session_name]:
+							subprocess.call(['ip', 'route', 'del', route], stderr=devnull)
+							subprocess.call(['ip', 'route', 'add', route, 'dev', _tun_name], stderr=devnull)
+
+			print "UDT tunnel", session_name, "launched, local", _tun.addr, "peer", _tun.dstaddr, "mtu", _tun.mtu, "encryption:", _encrypt_mode, "compress:", _compress
+
 		except:
 			if conn:
 				"""
