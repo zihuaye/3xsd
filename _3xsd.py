@@ -572,19 +572,10 @@ class _Z_EpollServer(StreamServer):
 			raise
 
 	def forward_tun_udt(self, _tun, _usock, _encrypt_mode, _compress, _session):  #uuu
-		if _compress == 'zlib':
-			_zip = lambda s: zlib.compress(s) if len(s) > 100 else s
-		elif _compress == 'lzo':
-			_zip = lambda s: lzo.compress(s) if len(s) > 100 else s
-		else:
-			_zip = lambda s : s
 
-		_repack = lambda s : ''.join([struct.pack('i', len(s)), s])
-
-		if _encrypt_mode:
-			_forward_it=lambda s : _usock.send(_repack(self.handler.encrypt_package(_zip(s), _encrypt_mode, _session)))
-		else:
-			_forward_it=lambda s : _usock.send(_repack(_zip(s)))
+		_zip = lambda s : eval(_compress).compress(s) if _compress and len(s) > 100 else s
+		_repack = lambda s : ''.join([struct.pack('!H', len(s)), s])
+		_forward_it=lambda s : _usock.send(_repack(self.handler.encrypt_package(_zip(s), _encrypt_mode, _session))) if _encrypt_mode else _usock.send(_repack(_zip(s)))
 
 		try:
 			while 1:
@@ -602,44 +593,17 @@ class _Z_EpollServer(StreamServer):
 			raise
 
 	def forward_udt_tun(self, _tun, _usock, _encrypt_mode, _compress, _session):  #ttt
-		if _compress == 'zlib':
-			_magic_str = ''.join([chr(0x78), chr(0x9c)])  #[0x78,0x9C]
-			_magic_len = len(_magic_str)
-			_unzip = lambda s : zlib.decompress(s) if _magic_str in s[:_magic_len] else s
-		elif _compress == 'lzo':
-			_magic_str = ''.join([chr(0xf0), chr(0x0), chr(0x0)])  #[0x89,0x4C,0x5A,0x4F] ?
-			_magic_len = len(_magic_str)
-			_unzip = lambda s : lzo.decompress(s) if _magic_str in s[:_magic_len] else s
-		else:
-			_unzip = lambda s : s
 
-		if _encrypt_mode:
-			_forward_it = lambda s : _tun.write(_unzip(self.handler.decrypt_package(s, _encrypt_mode, _session)))
-		else:
-			_forward_it = lambda s : _tun.write(_unzip(s))
+		_magic = {'zlib':(''.join([chr(0x78), chr(0x9c)]), 2), 'lzo':(''.join([chr(0xf0), chr(0x0), chr(0x0)]), 3)}
+		_unzip = lambda s : eval(_compress).decompress(s) if _compress and _magic[_compress][0] in s[:_magic[_compress][1]] else s
+		_forward_it = lambda s : _tun.write(_unzip(self.handler.decrypt_package(s, _encrypt_mode, _session))) if _encrypt_mode else _tun.write(_unzip(s))
 
 		try:
 			while 1:
-				_forward_it(_usock.recv(struct.unpack('i', _usock.recv(4))[0]))
+				_forward_it(_usock.recv(struct.unpack('!H', _usock.recv(2))[0]))
 		except:
 			print "Thread forward_udt_tun exit.."
 			raise
-
-	def send_out_udt(self, _usock, _session):
-		while 1:
-			time.sleep(0.01)
-			while self.udt_send_buf[_session]:
-				try:
-					_usock.send(self.udt_send_buf[_session][0])
-					with self.udt_send_buf_lock:
-						self.udt_send_buf[_session].pop(0)
-				except udt4.UDTException as e:
-					if e[0] == udt4.EASYNCSND:
-						#udt send buffer full, sleep to re-send it next time
-						break
-					elif _usock.getsockstate() > 5:
-						print "Thread send_out_udt exit.."
-						return
 
 	def check_3wd(self): #333
 		try:
@@ -3273,10 +3237,10 @@ class _xWHandler:
 			sock.close()
 			return
 		_c_str = ''.join([target, ':', _peer_ip, ':', str(_port), ':', str(_allow_redirect)])
-		sock.send(struct.pack('i', len(_c_str)))
+		sock.send(struct.pack('!i', len(_c_str)))
 		sock.send(_c_str)
 		try:
-			_len = struct.unpack('i', sock.recv(4))[0]
+			_len = struct.unpack('!i', sock.recv(4))[0]
 			_my_ip = sock.recv(_len)
 		except:
 			sock.close()
@@ -3284,11 +3248,11 @@ class _xWHandler:
 		#the _s_token used to verify the two sides has 4 factors: session_name, passwd(token), server_ip, client_ip
 		#this should be able to prevent from middleman attack & fake connect attempt
 		_s_token = self.encrypt_token(self.e_token[target], ''.join([_peer_ip, '#', _my_ip]))
-		sock.send(struct.pack('i', len(_s_token)))
+		sock.send(struct.pack('!i', len(_s_token)))
 		sock.send(_s_token)
 		try:
 			_result = -1
-			_result = struct.unpack('i', sock.recv(4))[0]
+			_result = struct.unpack('!i', sock.recv(4))[0]
 		except:
 			sock.close()
 			return
@@ -3297,7 +3261,7 @@ class _xWHandler:
 			self.connected[target] = True
 			self.server.udt_conns_cnt[self.server._worker_id].value += 1
 		elif _result == 1:
-			_len = struct.unpack('i', sock.recv(4))[0]
+			_len = struct.unpack('!i', sock.recv(4))[0]
 			_new_port_str = sock.recv(_len)
 			sock.close()
 
@@ -3360,15 +3324,6 @@ class _xWHandler:
 				_compress = self.compress_tunnel[session_name]
 			else:
 				_compress = None
-
-			"""
-			conn.setblocking(False, True)
-			self.server.udt_send_buf[session_name] = []
-			self.server.udt_send_buf_lock = multiprocessing.Lock()
-			t = threading.Thread(target=self.server.send_out_udt,args=(conn,session_name,))
-			t.daemon = True
-			t.start()
-			"""
 
 			t = threading.Thread(target=self.server.forward_tun_udt,args=(_tun,conn,_encrypt_mode,_compress,session_name,))
 			t.daemon = True
@@ -3462,7 +3417,7 @@ class _xWHandler:
 				return
 
 			_len = 0
-			_len = struct.unpack('i', conn.recv(4))[0]
+			_len = struct.unpack('!i', conn.recv(4))[0]
 			if _len > 0:
 				_c_str = conn.recv(_len)
 				_session_name, _my_ip, _my_port_str, _allow_redirect_str = _c_str.split(':',3)
@@ -3472,10 +3427,10 @@ class _xWHandler:
 					#no such session config
 					conn.close()
 				else:
-					conn.send(struct.pack('i', len(_peer_ip)))
+					conn.send(struct.pack('!i', len(_peer_ip)))
 					conn.send(_peer_ip)
 
-					_len = struct.unpack('i', conn.recv(4))[0]
+					_len = struct.unpack('!i', conn.recv(4))[0]
 					if _len > 0:
 						_s_token = conn.recv(_len)
 
@@ -3492,7 +3447,7 @@ class _xWHandler:
 
 							if _idle_port == int(_my_port_str):
 								#tell client, setup the tunnel, put conn in epoll
-								conn.send(struct.pack('i', 0))
+								conn.send(struct.pack('!i', 0))
 								if _session_name in self.connected:
 									#only one tunnel per session
 									self.destroy_tunnel(_session_name)
@@ -3501,8 +3456,8 @@ class _xWHandler:
 								self.server.udt_conns_cnt[self.server._worker_id].value += 1
 							else:
 								#send redirect msg
-								conn.send(struct.pack('i', 1))
-								conn.send(struct.pack('i', len(str(_idle_port))))
+								conn.send(struct.pack('!i', 1))
+								conn.send(struct.pack('!i', len(str(_idle_port))))
 								conn.send(str(_idle_port))
 								conn.close()
 						else:
