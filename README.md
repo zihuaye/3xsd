@@ -110,6 +110,7 @@ Python Packages(Modules) version reference:
        python-pytun==2.2.1
        pyudt4==0.6.0(epoll-fixes branch)
        pycrypto==2.6.1
+       python-lzo==1.8
 
 To install a module of specific version(like gevent 0.13.8), you can:
 
