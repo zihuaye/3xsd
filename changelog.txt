@@ -5,7 +5,9 @@ added:
       zlib & lzo support, lzo faster and lower CPU consumption, zlib get higher compress rate
       should not use at already compressed data transfering
   3wdd server side tunnel route support.
-  3wdd fix struct.pack/unpack() byte order may be unmatched under different cpu arch issue, all set to "network"(big-endian).
+
+fixed:
+  3wdd struct.pack/unpack() byte order may be unmatched under different cpu arch issue, all set to "network"(big-endian).
   
 v0.0.21  2016.03.13
 
