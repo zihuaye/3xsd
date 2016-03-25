@@ -1,6 +1,6 @@
 3wdd - added config - io_mode: block, default(block), non_block
-      block mode use 2 threads with blocking io, bi-direction forwarding packages
-      non_block mode use non-blocking io, epoll to handle udt&tun events(higher cpu consumtion)
+      block mode use 2 threads per tunnel with blocking io, bi-direction forwarding packages
+      non_block mode use 1 thread for tunnels per process with non-blocking io, epoll to handle udt&tun events(higher cpu consumtion)
       non_block mode extremely slow problem is solved, see https://github.com/zihuaye/3xsd/issues/2
 
 More...
