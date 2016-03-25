@@ -5,4 +5,7 @@
       on the other hand, block mode runs better in single-tunnel env
       non_block mode extremely slow problem is solved, see https://github.com/zihuaye/3xsd/issues/2
 
+3zsd - resolve dns ip of request hostname, then proxy to it
+      code optmizing
+      
 More...
