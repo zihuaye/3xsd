@@ -6,6 +6,7 @@
       non_block mode extremely slow problem is solved, see https://github.com/zihuaye/3xsd/issues/2
 
 3zsd - resolve dns ip of request hostname, then direct to it(transparent feature)
-      code optmizing
+      
+3wdd & 3zsd - code optmizing
       
 More...
