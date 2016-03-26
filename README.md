@@ -92,7 +92,10 @@ If you want to use 3wdd, python-pytun, pyudt4, pycrypto, python-lzo are also nee
 
 will quickly install pycrypto(probably do some 'linking' works) and lzo. The other two depended on pip install.
 
-Or, of cause you can let pip do it all for you:
+Be aware of pyudt4 having some bugs, you'd better down it's source code of epoll-fixes branch and apply the patch I offered.
+See changelog.txt v0.0.20  2016.03.07 fixed section for detail.
+
+Or, of cause you can let pip do it all for you(not including patching pyudt4):
 
        pip install 3xsd
 
