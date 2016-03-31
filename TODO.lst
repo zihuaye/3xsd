@@ -6,6 +6,8 @@
       non_block mode extremely slow problem is solved, see https://github.com/zihuaye/3xsd/issues/2
       (done)
       
+3wdd - bug fix: in wdd_idle_worker(), exclude worker_id==0 situation(master process should not recieve udt connection)
+
 3zsd - resolve dns ip of request hostname, then direct to it(transparent feature)
       (done)
       
