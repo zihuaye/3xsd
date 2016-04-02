@@ -1,5 +1,4 @@
 v0.0.23  2016.04.02
-
 added:
   3wdd config item 'io_mode' : block, default(block), non_block
       block mode use 2 threads per tunnel with blocking io, bi-direction forwarding packages
@@ -19,7 +18,6 @@ optimized:
   3wsd _xHandler.send_out_all_headers() logical optimize
 
 v0.0.22  2016.03.21
-
 added:
   3wdd tunnel on-the-fly compress function.
       zlib & lzo support, lzo faster and lower CPU consumption, zlib get higher compress rate
@@ -30,7 +28,6 @@ fixed:
   3wdd struct.pack/unpack() byte order may be unmatched under different cpu arch issue, all set to "network"(big-endian).
   
 v0.0.21  2016.03.13
-
 optimized:
   3wdd UDT & TUN handling loop major rewrite, cpu consumption rate decrease 0.6%.
       Now UDT tunnel(no encrypt) performing 50%-60% speed of direct TCP connection with ZetaTCP,
@@ -40,13 +37,11 @@ optimized:
       And an encrypted UDT tunnel will has 50% performance decrease.
       
 v0.0.20  2016.03.11
-
 fixed:
   3wdd udt tunnel extremly slow issue - update the pyudt-epoll-branch-memleak-ccc-fix.patch file.
   Optimized codes coming at v0.0.21
   
 v0.0.20  2016.03.07
-
 fixed:
   3wdd memory leak issue under centos6.x/python 2.6/2.7
 
@@ -61,7 +56,6 @@ optimized:
   3wdd tun & udt socket use the same epoll, and the same handling thread
   
 v0.0.19  2016.02.10
-
 unfixed:
   3wdd memory leak issue under centos6.x/python 2.6/2.7, centos7.x/python 2.7 works fine, seems no solution
 
