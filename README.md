@@ -92,6 +92,13 @@ If you want to use 3wdd, python-pytun, pyudt4, pycrypto, python-lzo are also nee
 
 will quickly install pycrypto(probably do some 'linking' works) and lzo. The other two depended on pip install.
 
+Probably you need this easy-install.pth file in python's site-packages dir:
+
+       import sys; sys.__plen = len(sys.path)
+       ./pycrypto-2.6.1-py2.6-linux-x86_64.egg
+       ./pyudt4-0.6.0-py2.6-linux-x86_64.egg
+       import sys; new=sys.path[sys.__plen:]; del sys.path[sys.__plen:]; p=getattr(sys,'__egginsert',0); sys.path[p:p]=new;          sys.__egginsert = p+len(new)
+
 Be aware of pyudt4 having some bugs, you'd better download it's source code of epoll-fixes branch and 
 apply the patch I offered. See changelog.txt v0.0.20  2016.03.07 fixed section for detail.
 
