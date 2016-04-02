@@ -1,3 +1,20 @@
+v0.0.23  2016.04.02
+
+added:
+  3wdd config item 'io_mode' : block, default(block), non_block
+      block mode use 2 threads per tunnel with blocking io, bi-direction forwarding packages
+      non_block mode use 1 thread for tunnels per process with non-blocking io, epoll to handle udt&tun events
+      non_block mode take higher cpu consumtion than block mode, but will performance better in multi-tunnels env
+      on the other hand, block mode runs better in single-tunnel env
+      non_block mode extremely slow problem is solved, see https://github.com/zihuaye/3xsd/issues/2
+      
+  3zsd resolve dns ip of request hostname, then direct to it(transparent feature), through a special
+      config line: * = 100,0.0.0.0:0
+
+optimized:
+  3wdd & 3zsd - using deque instead of list in zidles and udt_send_buf
+  3wsd _xHandler.send_out_all_headers() logical optimize
+
 v0.0.22  2016.03.21
 
 added:
