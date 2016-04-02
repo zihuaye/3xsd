@@ -11,7 +11,7 @@ added:
 
 fixed:
   3wdd in wdd_idle_worker(), exclude worker_id==0 situation(master process should not recieve udt connection)
-  3wdd udt tunnel using epoll_wait() extremely slow issue, see https://github.com/zihuaye/3xsd/issues/2 for detail
+  3wdd udt tunnel using epoll extremely slow issue, see https://github.com/zihuaye/3xsd/issues/2 for detail
       
 optimized:
   3wdd & 3zsd - using deque instead of list in zidles and udt_send_buf
