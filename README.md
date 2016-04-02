@@ -99,6 +99,9 @@ Probably you need this easy-install.pth file in python's site-packages dir:
        ./pyudt4-0.6.0-py2.6-linux-x86_64.egg
        import sys; new=sys.path[sys.__plen:]; del sys.path[sys.__plen:]; p=getattr(sys,'__egginsert',0); sys.path[p:p]=new;          sys.__egginsert = p+len(new)
 
+I provide a pre-compiled package [pyudt_tun-centos6-x86_64.tar.gz](https://github.com/zihuaye/3xsd/blob/master/pyudt_tun-centos6-x86_64.tar.gz) to simplified
+the installation procedure.
+
 Be aware of pyudt4 having some bugs, you'd better download it's source code of epoll-fixes branch and 
 apply the patch I offered. See changelog.txt v0.0.20  2016.03.07 fixed section for detail.
 
