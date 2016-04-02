@@ -6,11 +6,14 @@ added:
       non_block mode use 1 thread for tunnels per process with non-blocking io, epoll to handle udt&tun events
       non_block mode take higher cpu consumtion than block mode, but will performance better in multi-tunnels env
       on the other hand, block mode runs better in single-tunnel env
-      non_block mode extremely slow problem is solved, see https://github.com/zihuaye/3xsd/issues/2
-      
+
   3zsd resolve dns ip of request hostname, then direct to it(transparent feature), through a special
       config line: * = 100,0.0.0.0:0
 
+fixed:
+  3wdd in wdd_idle_worker(), exclude worker_id==0 situation(master process should not recieve udt connection)
+  3wdd udt tunnel using epoll_wait() extremely slow issue, see https://github.com/zihuaye/3xsd/issues/2 for detail
+      
 optimized:
   3wdd & 3zsd - using deque instead of list in zidles and udt_send_buf
   3wsd _xHandler.send_out_all_headers() logical optimize
