@@ -126,6 +126,12 @@ Python Packages(Modules) version reference:
        pycrypto==2.6.1
        python-lzo==1.8
 
+System libs version reference:
+
+       libevent-1.4.13-4(not actually used, just needed for gevent to function)
+       udt-4.11-6
+       lzo-2.03-3.1
+
 To install a module of specific version(like gevent 0.13.8), you can:
 
        pip install gevent==0.13.8
