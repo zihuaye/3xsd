@@ -2,5 +2,4 @@
 
 3wdd - route metric, routing data through different path, depending on tunnel rtt
 
-3nsd - Global DNS Left-Right Range Resolve(LRRR)
-      see white paper
+3nsd - Global DNS Left-Right Range Resolve(LRRR), see white paper
