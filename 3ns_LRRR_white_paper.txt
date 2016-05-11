@@ -73,8 +73,8 @@ ga.l.3xsd.net.          15      IN      A       69.12.73.123
 
 query_name: ga.i.3xsd.net
 cname: prefix-ip-ts0-ts1-ts2.ga.l.3xsd.net
-prefix:prefix identifying a L3R check
-ip:query peer's ip in 32bit int
+prefix: prefix identifying a L3R check
+ip: query peer's ip in 32bit int
 ts0: base time, in secs
 ts1: a measure time start point if ts2 = 0, or rtt of a if ts2 > 0, in msecs from base time
 ts2: b measure time start point if ts3 = 0, or rtt of b if ts3 > 0, in msecs from base time
