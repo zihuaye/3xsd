@@ -85,9 +85,15 @@ After pings&pongs between left and right side, at last a & b returned:
 
 means left rtt=166, right rtt=253, we should choose left side.
 
+Side-effects:
 
-As you can see, L3R has some side-effects, one of them is the first query would take a long time(typically 1.0 - 2.5sec).
-A cache will help accelerating the query following.
+The above test, 5 additional cname query are generated, each takes 150-250ms in a global network.environment.The last cname
+query can be skiped so 4 cname query will be the least overhead(about 1.0 - 1.5 secs).
+
+A distance cache(a&b) of peers, will help accelerating the query following, query result like this:
+
+ga.i.3xsd.net.          99       IN      CNAME   ga.l.3xsd.net.
+ga.l.3xsd.net.          99       IN      A       69.12.73.123
 
 
 
