@@ -7,10 +7,12 @@ near to user without a geoip db?
 
 
 The issue is that there are some diffcults in geoip based name resolving:
-1.Do you have a geoip db? Yes, GeoIP is freely available. But a DNS server supporting GeoIP resolve? Yes, Geodns. But for BIND only.
+1.Do you have a geoip db? Yes, GeoIP is freely available. But a DNS server supporting GeoIP resolve? 
+  Yes, Geodns. But for BIND only.
 2.GeoIP db needs update frequently, and reload dns service.
-3.Some user very near to you, have complex network env. For example: a HK user may access your server in US much faster than your server in mainland china. 
-  Don't ask me why. So, GeoIP based name resolving may not correct in some special cases.
+3.Some user very near to you, have complex network env. For example: a HK user may access your server in US much faster 
+  than your server in mainland china. Don't ask me why. 
+  So, GeoIP based name resolving may not correct in some special cases.
 
 
 A RTT(Round-Trip-Time) based name resolving method called Left-Right Range Resolve(LRRR)
