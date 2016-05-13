@@ -2,7 +2,8 @@ Global DNS Left-Right Range Resolve(LRRR)
 
 
 
-LRRR(L3R) is designed to solve such a problem: How to resolve a dns domain name globally to the ip of server most near to user without a geoip db?
+LRRR(L3R) is designed to solve such a problem: How to resolve a dns domain name globally to the ip of server most 
+near to user without a geoip db?
 
 
 The issue is that there are some diffcults in geoip based name resolving:
