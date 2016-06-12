@@ -5,6 +5,7 @@
 #
 # The xHandler to handle web requests, and the xDNSHandler to handle DNS query.
 # The xZHandler to handle proxy(load-balance/cache)requests, and the xDFSHandler to handle DFS requests.
+# The xWHandler to handle tunneling data.
 #
 # Author: Zihua Ye (zihua.ye@qq.com, zihua.ye@gmail.com)
 #
@@ -13,7 +14,7 @@
 # All 3 party modules copyright go to their authors(see their licenses).
 #
 
-__version__ = "0.0.23"
+__version__ = "0.0.24"
 
 import os, sys, io, time, calendar, random, multiprocessing, threading
 import shutil, mmap, sendfile, zlib, gzip, lzo, copy, setproctitle
@@ -31,6 +32,7 @@ from Crypto.Cipher import AES
 from Crypto import Random
 #from writev import writev
 #from meliae import scanner
+from pprint import pprint
 
 Port = 8000	#Listening port number
 Backlog = 1000	#Listening backlog
@@ -519,6 +521,7 @@ class _Z_EpollServer(StreamServer):
 							t = threading.Thread(target=self.handler.connect_udt_server, args=(_session,))
 							t.daemon = True
 							t.start()
+
 			t = threading.Thread(target=self.check_3wd, args=())
 			t.daemon = True
 			t.start()
@@ -580,10 +583,10 @@ class _Z_EpollServer(StreamServer):
 				else:
 					if _tun.fileno() == -1:
 						#tunnel down
-						print "Thread forward_tun_udt exit.."
+						print "Thread forward_tun_udt of tunnel:", _session, "exit.."
 						break
 		except:
-			print "Thread forward_tun_udt exit.."
+			print "Thread forward_tun_udt of tunnel", _session, "exit.."
 			raise
 
 	def forward_udt_tun(self, _tun, _usock, _encrypt_mode, _compress, _session):  #ttt
@@ -595,8 +598,46 @@ class _Z_EpollServer(StreamServer):
 		try:
 			while 1:
 				_forward_it(_usock.recv(struct.unpack('!H', _usock.recv(2))[0]))
+		except IOError as e:
+			if e.errno == errno.EINVAL:
+				#illegal data, maybe tunnel peer shutdown suddenly
+				_usock.close()
+			print "Thread forward_udt_tun of tunnel", _session, "exit.."
+			raise
 		except:
-			print "Thread forward_udt_tun exit.."
+			print "Thread forward_udt_tun of tunnel", _session, "exit.."
+			raise
+
+	def forward_udt_relay(self, _usock, _session):
+		_repack = lambda s : ''.join([struct.pack('!H', len(s)), s])
+
+		try:
+			_from, _to = self.handler.udt_relay[_session]
+			_relay_session = None
+			_first = True
+			while not _relay_session:
+				if _session == _from:
+					self.handler.udt_relay_thread_stat[_from] = True
+					_relay_session = self.zsess.get(_to, None)
+				else:
+					self.handler.udt_relay_thread_stat[_to] = True
+					_relay_session = self.zsess.get(_from, None)
+
+				if _first:
+					_first = False
+				else:
+					time.sleep(5)
+			else:
+				_to_usock = _relay_session[1]
+				while 1:
+					_to_usock.send(_repack(_usock.recv(struct.unpack('!H', _usock.recv(2))[0])))
+		except:
+			if _session == _from:
+				self.handler.udt_relay_thread_stat[_from] = False
+			else:
+				self.handler.udt_relay_thread_stat[_to] = False
+
+			print "Thread forward_udt_relay of tunnel", _session, "exit.."
 			raise
 
 	def check_3wd(self): #333
@@ -613,12 +654,14 @@ class _Z_EpollServer(StreamServer):
 							continue
 						if _session in self.handler.client_session:
 							_redial = False
-							_tun, _usock, _addr = self.zsess.get(_session, [None, None, None])
+							_tun, _usock, _addr = self.zsess.get(_session, (None, None, None))
 							if _usock:
 								#{INIT = 1, OPENED, LISTENING, CONNECTING, CONNECTED, BROKEN, CLOSING, CLOSED, NONEXIST}
 								if _usock.getsockstate() > 5:	#connection gone
 									self.handler.destroy_tunnel(_session)
 									_redial = True
+								else:
+									self.handler.tun_rtt[_session]= _usock.perfmon().msRTT
 							else:
 								#must connect failed before
 								_redial = True
@@ -632,16 +675,81 @@ class _Z_EpollServer(StreamServer):
 					for _session in self.handler.connected.keys():
 						if _session not in self.handler.wdd_dial or _session not in self.handler.client_session:
 							#server connection
-							_tun, _usock, _addr = self.zsess.get(_session, [None, None, None])
+							_tun, _usock, _addr = self.zsess.get(_session, (None, None, None))
 							if _usock:
 								if _usock.getsockstate() > 5:	#connection gone
 									self.handler.destroy_tunnel(_session)
+								else:
+									self.handler.tun_rtt[_session]= _usock.perfmon().msRTT
 
 							if os.path.exists('/tmp/usock_stat'):
 								udt4.dump_perfmon(_usock.perfmon())
 
 					if self.workers > 1:
 						self.wdd_idle_worker(9000)
+
+				for _session in self.handler.udt_relay:
+					if _session in self.handler.udt_relay_thread_stat and not self.handler.udt_relay_thread_stat[_session]:
+						#relaunch the udt relay thread, due to one side may be downed before
+						_tun, _usock, _addr = self.zsess.get(_session, (None, None, None))
+						if _usock:
+							print "Re-launching relay tunnel", _session
+							if self.handler.io_mode == self.handler.IO_NONBLOCK:
+								_n = _usock.UDTSOCKET.UDTSOCKET % self.udt_thread_limit
+								if self.upolls[_n] is None:
+									self.upolls[_n] = udt.Epoll()
+									self.upolls[_n].add_usock(_usock, udt4.UDT_EPOLL_IN)
+									t = threading.Thread(target=self.handle_event_udt_tun, args=(_n,))
+									t.daemon = True
+									t.start()
+								else:
+									self.upolls[_n].add_usock(_usock, udt4.UDT_EPOLL_IN)
+								self.handler.udt_relay_thread_stat[_session] = True
+							else:
+								t = threading.Thread(target=self.forward_udt_relay,args=(_usock,_session,))
+								t.daemon = True
+								t.start()
+
+				if self.handler.routing_metric:
+					with open(os.devnull, 'w') as devnull:
+						for _route in self.handler.route_metric:
+							if len(self.handler.route_metric[_route]) > 1:
+								_target_session = None
+								_target_session_rtt = -1
+								_fixed_metric = 0  #0 for dynamic, >0 for fixed
+								for _session in self.handler.route_metric[_route]:
+									if _session in self.handler.route_metric_fixed[_route]:
+										_fixed_metric = self.handler.route_metric_fixed[_route][_session]
+									if _session in self.handler.tun_rtt:
+										_rtt_old=self.handler.route_metric[_route][_session]
+										_rtt = self.handler.route_metric[_route][_session] = int(self.handler.tun_rtt[_session] * 10)
+										if _rtt == 0:
+											_rtt = self.handler.route_metric[_route][_session] = 1
+										if _target_session_rtt == -1:
+											if _fixed_metric > 0:
+												_target_session_rtt = _fixed_metric
+											else:
+												_target_session_rtt = _rtt
+											_target_session = _session
+										else:
+											if _fixed_metric > 0:
+												if _target_session_rtt > _fixed_metric:
+													_target_session_rtt = _fixed_metric
+													_target_session = _session
+											elif _target_session_rtt > _rtt:
+												_target_session_rtt = _rtt
+												_target_session = _session
+
+										subprocess.call(['ip', 'route', 'del', _route, 'metric', str(_rtt_old), 'dev', ''.join([_session, '.', str(self._worker_id)])], stderr=devnull)
+										subprocess.call(['ip', 'route', 'add', _route, 'metric', str(_rtt),     'dev', ''.join([_session, '.', str(self._worker_id)])], stderr=devnull)
+
+								if _target_session:
+									#change the default outgoing path(dev) for a route
+									subprocess.call(['ip', 'route', 'replace', _route, 'metric', str('0'), 'dev', ''.join([_target_session, '.', str(self._worker_id)])], stderr=devnull)
+							else:
+								#only one path, no need to change
+								continue
+
 				del _tun
 				del _usock
 				del _addr
@@ -1694,6 +1802,20 @@ class _xDNSHandler:
 	xcache_ttl = 10
 	probe_interval = 10  #icmp probe interval in seconds, see if the ip alive
 
+	LR_LEFT = 0
+	LR_RIGHT = 1
+
+	lr_peers = {}
+	lr_ttl = 3600
+	lr_left = ''
+	lr_right = ''
+	lr_range = ''
+	lr_range_suffix = ''
+	lr_prefix = 'lr'
+	lr_resolve = False
+	lr_left_measuring = False
+	lr_right_measuring = False
+
 	def __init__(self, conn, client_address, server, config_section='3nsd'):
 		self.server = server
 		#if server.workers > 1:
@@ -1709,20 +1831,50 @@ class _xDNSHandler:
 		self.rra = {}
 		self.rrn = {}
 
+		lr_peers = {}
+		lr_ttl = 3600
+		lr_left = ''
+		lr_right = ''
+		lr_range = ''
+		lr_range_suffix = ''
+		lr_prefix = 'lr'
+		lr_resolve = False
+		lr_left_measuring = False
+		lr_right_measuring = False
+
 		self.config = ConfigParser.ConfigParser()
 		if not self.config.read('3xsd.conf'):
 			self.config.read('/etc/3xsd.conf')
 
 		for name, value in self.config.items(config_section):
-			v = value.split(',', 1)
-			if len(v) > 1:
-				# [ttl, ip, ...]
-				self.ttl[name] = int(v[0])
-				self.rra[name] = self.ip_list(name, v[1], config_section)
-				self.rrn[name] = 0
+			if name == "left":
+				if value:
+					self.lr_left = value.lower().strip()
+			elif name == "right":
+				if value:
+					self.lr_right = value.lower().strip()
+			elif name == "range":
+				if value:
+					self.lr_range = value.lower().strip()
+			elif name == "range_suffix":
+				if value:
+					self.lr_range_suffix = value.lower().strip()
+			elif name == "lr_ttl":
+				if value:
+					self.lr_ttl = int(value)
+			elif name == "lr_prefix":
+				if value:
+					self.lr_prefix = value.lower().strip()
+			else:
+				v = value.split(',', 1)
+				if len(v) > 1:
+					# [ttl, ip, ...]
+					self.ttl[name] = int(v[0])
+					self.rra[name] = self.ip_list(name, v[1], config_section)
+					self.rrn[name] = 0
 
 	def ip_list(self, name, ipstr, config_section):
-		#ip,ip,ip... can be the following format:   lll
+		#ip,ip,ip... can be the following format:   #lll
 		#10.23.4.11  -	single ip, 10.23.4.101-200  -  multi ip
 		a = ipstr.split(',')
 		iplist = []
@@ -1769,9 +1921,11 @@ class _xDNSHandler:
 		while 1:
 			try:
 				self.data, self.addr = self.sock.recvfrom(1024)
-				#print "worker", self.server._worker_id, "get:", self.addr
 				if self.x_parse_query() == self.PARSE_OK:
-					self.x_gen_answer()
+					if not self.lr_resolve:
+						self.x_gen_answer()
+					else:
+						self.x_lr_resolve()
 					self.x_send_out()
 				else:
 					self.xResult = self.xR_ERR_PARSE
@@ -1783,10 +1937,35 @@ class _xDNSHandler:
 					raise
 
 	def shift(self, alist, n):
-		_n = n % len(alist)
-		return alist[_n:] + alist[:_n]
+		if len(alist) == 1:
+			return alist
+		else:
+			_n = n % len(alist)
+			return alist[_n:] + alist[:_n]
 
-	def x_parse_query(self):
+	def x_check_range_resolve(self):
+		#check if it's a left-right range resolving name
+		self.lr_resolve = self.lr_left_measuring = self.lr_right_measuring = False
+
+		if self.lr_range_suffix in self.query_name[0-len(self.lr_range_suffix):] and self._rra and self._rra[0] == '0.0.0.0':
+			self.lr_resolve = True
+
+		if self.lr_left  in self.query_name[0-len(self.lr_left):] and self.lr_prefix in self.query_name[:len(self.lr_prefix)]:
+			self.lr_resolve = True
+			self.lr_left_measuring = True
+
+		if self.lr_right in self.query_name[0-len(self.lr_right):] and self.lr_prefix in self.query_name[:len(self.lr_prefix)]:
+			self.lr_resolve = True
+			self.lr_right_measuring = True
+
+		if self.lr_resolve:
+			_peer, _ = self.addr
+			if _peer not in self.lr_peers:
+				self.lr_peers[_peer] = [int(time.time()) + self.lr_ttl, 0, 0]  #[ttl, left-rtt,right-rtt], also as [ttl, a,b]
+
+		return self.lr_resolve
+
+	def x_parse_query(self):  #pqpq
 		self.q = dpkt.dns.DNS(self.data)
 
 		#we accept just A type query
@@ -1797,14 +1976,197 @@ class _xDNSHandler:
 		self._rra = self.rra.get(self.query_name)
 		self._ttl = self.ttl.get(self.query_name)
 		
-		if self._rra is not None and self._ttl is not None:
-		#ok, rr & ttl config found
+		if self.x_check_range_resolve():
+			#It's a left-right range resolve
+			return self.PARSE_OK
+		elif self._rra is not None and self._ttl is not None:
+			#ok, rr & ttl config found
 			return self.PARSE_OK
 		else:
-		#not my serving domain name
+			#not my serving domain name
 			return self.PARSE_ERROR
 
-	def x_gen_answer(self):
+	def x_lr_resolve(self): #lrlr
+		_peer = self.addr[0]
+		_ttl, a, b = self.lr_peers[_peer]
+		_t = time.time()  #_t: current time
+
+		print "---------------------"
+		print _peer, self.lr_peers[_peer]
+
+		if _t <= _ttl:
+			#cache of a,b not expired
+			if a > 0 and b > 0:
+				self.x_lr_range(a, b, ch=True) #ch = cache hit
+				return
+		else:
+			#cache of a,b expired
+			_ttl = int(_t) + self.lr_ttl
+			a = b = 0
+			self.lr_peers[_peer] = [_ttl, a, b]
+
+		if self.lr_left_measuring:
+			#doing left measure
+			_speer0, _sts0, _sts1, _sts2 = self.query_name.split('.')[0].split('-')[1:]
+			_ts0, _ts1, _ts2 = (int(_sts0), int(_sts1), int(_sts2))
+
+			_peer0 = socket.inet_ntoa(struct.pack('!I', int(_speer0)))
+			if _peer0 not in self.lr_peers:
+				self.lr_peers[_peer0] = [int(_t) + self.lr_ttl, 0, 0]
+
+			if _ts2 > 0:
+				b = self.lr_peers[_peer][2] = self.lr_peers[_peer0][2] = _ts2
+			if a == 0:
+				if _ts1 == 0:
+					self.x_lr_cname(self.LR_LEFT, _ts0, int((_t - _ts0) * 1000), _ts2)
+					return
+				else:
+					a = self.lr_peers[_peer][1] = self.lr_peers[_peer0][1] = int((_t - _ts0) * 1000) - _ts1 if _ts1>300000 else _ts1
+			if b == 0:
+				self.x_lr_cname(self.LR_RIGHT, _ts0, a, 0)
+			elif a > 0 and b > 0:
+				if a < _ts1:
+					#for debug purpose
+					self.x_lr_cname(self.LR_LEFT, _ts0, a, b)
+				else:
+					self.x_lr_range(a, b)
+		elif self.lr_right_measuring:
+			#doing right measure
+			_speer0, _sts0, _sts1, _sts2 = self.query_name.split('.')[0].split('-')[1:]
+			_ts0, _ts1, _ts2 = (int(_sts0), int(_sts1), int(_sts2))
+
+			_peer0 = socket.inet_ntoa(struct.pack('!I', int(_speer0)))
+			if _peer0 not in self.lr_peers:
+				self.lr_peers[_peer0] = [int(_t) + self.lr_ttl, 0, 0]
+
+			if _ts1 > 0:
+				a = self.lr_peers[_peer][1] = self.lr_peers[_peer0][1] = _ts1
+			if b == 0:
+				if _ts2 == 0:
+					self.x_lr_cname(self.LR_RIGHT, _ts0, _ts1, int((_t - _ts0) * 1000))
+					return
+				else:
+					b = self.lr_peers[_peer][2] = self.lr_peers[_peer0][2] = int((_t - _ts0) * 1000) - _ts2 if _ts2>300000 else _ts2
+			if a == 0:
+				self.x_lr_cname(self.LR_LEFT, _ts0, 0, b)
+			elif a > 0 and b > 0:
+				if b < _ts2:
+					#for debug purpose
+					self.x_lr_cname(self.LR_RIGHT, _ts0, a, b)
+				else:
+					self.x_lr_range(a, b)
+		else:
+			#doing initial query
+			#_ts0: base time stamp, in secs
+			_ts0 = int(_t - 300)
+			#_ts: offset time stamp from base time, in msecs
+			_ts = int((_t - _ts0) * 1000)
+
+			if self.lr_range == 'left':
+				#left
+				if a == 0 and b == 0:
+					if _ts0 % 2:
+						self.x_lr_cname(self.LR_LEFT, _ts0, _ts)
+					else:
+						self.x_lr_cname(self.LR_RIGHT, _ts0, 0, 0)
+				elif a == 0: #b > 0
+					self.x_lr_cname(self.LR_LEFT, _ts0, _ts, b)
+				elif b == 0: #a > 0
+					self.x_lr_cname(self.LR_RIGHT, _ts0, a, 0)
+				else: #a > 0, b > 0
+					self.x_lr_range(a, b, ch=True)
+			else:
+				#right
+				if a == 0 and b == 0:
+					if _ts0 % 2:
+						self.x_lr_cname(self.LR_RIGHT, _ts0, 0, _ts)
+					else:
+						self.x_lr_cname(self.LR_LEFT, _ts0, 0, 0)
+				elif b == 0: #a > 0
+					self.x_lr_cname(self.LR_RIGHT, _ts0, a, _ts)
+				elif a == 0: #b > 0
+					self.x_lr_cname(self.LR_LEFT, _ts0, 0, b)
+				else: #a > 0, b > 0
+					self.x_lr_range(a, b, ch=True)
+
+	def x_lr_range(self, a, b, ch=False): #lrlr
+		if self.lr_left_measuring:
+			_cname = self.query_name[self.query_name.find('.')+1:]
+			if a > b:
+				_cname = _cname.replace(self.lr_left, self.lr_right)
+		elif self.lr_right_measuring:
+			_cname = self.query_name[self.query_name.find('.')+1:]
+			if a < b:
+				_cname = _cname.replace(self.lr_right, self.lr_left)
+		else:
+			if self.lr_range == 'left':
+				_cname = self.query_name.replace(self.lr_range_suffix, self.lr_left)
+			elif self.lr_range == 'right':
+				_cname = self.query_name.replace(self.lr_range_suffix, self.lr_right)
+
+		#gen cname answer
+		self.q.op = dpkt.dns.DNS_RA
+		self.q.rcode = dpkt.dns.DNS_RCODE_NOERR
+		self.q.qr = dpkt.dns.DNS_R
+
+		arr = dpkt.dns.DNS.RR()
+		arr.cls = dpkt.dns.DNS_IN
+		arr.type = dpkt.dns.DNS_CNAME
+		arr.name = self.query_name
+		arr.cname = _cname
+		arr.ttl = 0 if not ch else self.ttl.get(_cname, 0)
+		self.q.an.append(arr)
+
+		#I haven't understand what the Authority Record is going on..
+		if self.q.ar:	del self.q.ar[:]
+
+		self.answer = str(self.q)
+
+	def x_lr_cname(self, _range, ts0, ts1, ts2=0): #lrlr
+		#query_name: ga.i.3xsd.net
+		#cname: ts0-ts1-ts2.ga.l.3xsd.net
+		#ts0: base time, in secs
+		#ts1: a measure time start point if ts2 = 0, or rtt of a if ts2 > 0, in msecs from base time
+		#ts2: b measure time start point if ts3 = 0, or rtt of b if ts3 > 0, in msecs from base time
+
+		if self.lr_right_measuring or self.lr_left_measuring:
+			_query_name = self.query_name[self.query_name.find('.')+1:]
+		else:
+			_query_name = self.query_name
+
+		if _range == self.LR_LEFT:
+			if self.lr_right_measuring:
+				_query_name = _query_name.replace(self.lr_right, self.lr_left)
+			else:
+				_query_name = _query_name.replace(self.lr_range_suffix, self.lr_left)
+		elif _range == self.LR_RIGHT:
+			if self.lr_left_measuring:
+				_query_name = _query_name.replace(self.lr_left, self.lr_right)
+			else:
+				_query_name = _query_name.replace(self.lr_range_suffix, self.lr_right)
+
+		#[prefix, peer_ip, ts0, ts1, ts2]
+		_cname = ''.join([self.lr_prefix, '-', str(struct.unpack('!I', socket.inet_aton(self.addr[0]))[0]), '-', str(ts0), '-', str(ts1), '-', str(ts2), '.', _query_name])
+
+		#gen cname answer
+		self.q.op = dpkt.dns.DNS_RA
+		self.q.rcode = dpkt.dns.DNS_RCODE_NOERR
+		self.q.qr = dpkt.dns.DNS_R
+
+		arr = dpkt.dns.DNS.RR()
+		arr.cls = dpkt.dns.DNS_IN
+		arr.type = dpkt.dns.DNS_CNAME
+		arr.name = self.query_name
+		arr.cname = _cname
+		arr.ttl = 0
+		self.q.an.append(arr)
+
+		#I haven't understand what the Authority Record is going on..
+		if self.q.ar:	del self.q.ar[:]
+
+		self.answer = str(self.q)
+
+	def x_gen_answer(self): #gaga
 		if self.query_name in self.server.xcache:
 			_c = self.server.xcache.get(self.query_name)
 			if _c[0] > time.time():
@@ -1830,7 +2192,7 @@ class _xDNSHandler:
 		self._rra = self.shift(self.rra.get(_query_name), self.rrn.get(_query_name))
 		self.rrn[_query_name] = (self.rrn[_query_name] + 1) % len(self.rra.get(_query_name))
 
-		#gen rr records
+		#gen rr records for A resolve
 		while _alive == 0:
 			for _ip_s in self._rra:
 				#append rr record with ip not down
@@ -1857,6 +2219,9 @@ class _xDNSHandler:
 				self.rrn[_query_name] += 1
 				self._ttl = self.ttl.get(_query_name)
 
+		#I haven't understand what the Authority Record is going on..
+		if self.q.ar:	del self.q.ar[:]
+
 		self.answer = str(self.q)
 	
 		#cache it, when expired at one ttl
@@ -1880,9 +2245,11 @@ class _xDNSHandler:
 				if len(gs) > 0:
 					del gs[:]
 				for ip in self.stat.keys():
+					if ip == '0.0.0.0': continue
 					if time.time() > self.stat[ip][2] + self.stat[ip][1]:  #last-check + ttl
 						gs.append(gevent.spawn(self.icmp_ping, ip))  #do works concurrently
 				gevent.joinall(gs)
+			#print "lr_peers:", self.lr_peers
 
 	def icmp_ping(self, ip):
 		#be sure to be a gevent.socket, for concurrent reason
@@ -3130,6 +3497,13 @@ class _xWHandler:
 	peer_port = {}
 
 	tun_route = {}
+	tun_rtt = {}
+	route_metric = {}
+	route_metric_fixed = {}
+	routing_metric = False
+
+	udt_relay = {}
+	udt_relay_thread_stat = {}
 
 	IO_BLOCK = 0
 	IO_NONBLOCK = 1
@@ -3165,8 +3539,14 @@ class _xWHandler:
 		self.peer_ip = {}
 		self.peer_port = {}
 		self.tun_route = {}
+		self.tun_rtt = {}
+		self.route_metric = {}
+		self.route_metric_fixed = {}
+		self.udt_relay = {}
+		self.udt_relay_thread_stat = {}
 		self.compress_tunnel = {}
 		self.io_mode = 0
+		self.routing_metric = False
 
 		self.config = ConfigParser.ConfigParser()
 		if not self.config.read('3xsd.conf'):
@@ -3203,14 +3583,26 @@ class _xWHandler:
 					self.io_mode = self.IO_NONBLOCK
 				else:
 					self.io_mode = self.IO_BLOCK
+			elif name == 'relay':
+				for _from_to in value.split(','):
+					_from, _to = _from_to.split(':')
+					if _from and _to:
+						self.udt_relay[_from] = (_from, _to)
+						self.udt_relay[_to] = (_from, _to)
+						self.udt_relay_thread_stat[_from] = False
+						self.udt_relay_thread_stat[_to] = False
+			elif name == 'routing_metric':
+				_value = value.lower()
+				if _value == 'on':
+					self.routing_metric = True
 			else:
 				v = value.split(':')
 				if len(v) >= 5:
 					self.session[name] = True
 					self.tun_local_ip[name] = v[0]
 					self.tun_peer_ip[name] = v[1]
-					self.tun_mtu[name] = int(v[2])
-					self.tun_txqueue[name] = int(v[3])
+					self.tun_mtu[name] = int(v[2]) if v[2] else 0
+					self.tun_txqueue[name] = int(v[3]) if v[3] else 0
 					self.token[name] = v[4]
 					self.e_token[name] = self.encrypt_token(name, v[4])
 					if self.encrypt:
@@ -3250,7 +3642,20 @@ class _xWHandler:
 					self.tun_route[name] = []
 					for route in v[len(v) - 1].split(','):
 						if route:
+							if route.count('/') == 2:
+								_net, _mask, _s_metric = route.split('/')
+								route = ''.join([_net, '/', _mask])
+								_metric = int(_s_metric)
+								if route in self.route_metric_fixed:
+									self.route_metric_fixed[route][name] = _metric
+								else:
+									self.route_metric_fixed[route] = {name: _metric}
+
 							self.tun_route[name].append(route)
+							if route in self.route_metric:
+								self.route_metric[route][name] = len(self.route_metric[route]) + 1
+							else:
+								self.route_metric[route] = {name: 1}
 
 	def encrypt_token(self, session, token):
 		md5 = hashlib.md5()
@@ -3260,7 +3665,7 @@ class _xWHandler:
 	def init_handler(self):
 		pass
 
-	def connect_udt_server(self, target, new_port=None):
+	def connect_udt_server(self, target, new_port=None):  #ctud
 		sock = udt.UdtSocket()
 		sock.setsockopt(udt4.UDT_RCVBUF, self.server.recv_buf_size) #default 10MB
 		sock.setsockopt(udt4.UDT_SNDBUF, self.server.send_buf_size) #default 10MB
@@ -3269,7 +3674,11 @@ class _xWHandler:
 			_allow_redirect = 0
 		else:
 			_port = self.peer_port[target]
-			_allow_redirect = 1
+			if _port < 0:
+				_port = abs(_port)
+				_allow_redirect = 0
+			else:
+				_allow_redirect = 1
 
 		_peer_ip = socket.gethostbyname(self.peer_ip[target])
 		try:
@@ -3315,24 +3724,50 @@ class _xWHandler:
 		try:
 			if not conn or not addr or not session_name: return
 
+			_do_relay = True if session_name in self.udt_relay else False
+
 			_tun = None
-			_tun_name = ''.join([session_name, '.', str(self.server._worker_id)])
-			_tun = pytun.TunTapDevice(name=_tun_name, flags=pytun.IFF_TUN|pytun.IFF_NO_PI)
+			if not _do_relay:
+				_tun_name = ''.join([session_name, '.', str(self.server._worker_id)])
+				_tun = pytun.TunTapDevice(name=_tun_name, flags=pytun.IFF_TUN|pytun.IFF_NO_PI)
 
-			_tun.addr = self.tun_local_ip[session_name]
-			_tun.dstaddr = self.tun_peer_ip[session_name]
+				_tun.addr = self.tun_local_ip[session_name]
+				_tun.dstaddr = self.tun_peer_ip[session_name]
 
-			_tun.netmask = '255.255.255.255'
-			_tun.mtu = self.tun_mtu[session_name]
+				_tun.netmask = '255.255.255.255'
+				_tun.mtu = self.tun_mtu[session_name]
 
-			with open(os.devnull, 'w') as devnull:
-				subprocess.call(['ip', 'route', 'del', ''.join([_tun.dstaddr, '/', _tun.netmask])], stderr=devnull)
+				with open(os.devnull, 'w') as devnull:
+					subprocess.call(['ip', 'route', 'del', ''.join([_tun.dstaddr, '/', _tun.netmask])], stderr=devnull)
 
+				self.server.ztuns[_tun.fileno()] = _tun
+				self.server.s_tuns[_tun.fileno()] = session_name
+				_tun.up()
+
+				with open(os.devnull, 'w') as devnull:
+					subprocess.call(['ip', 'link', 'set', _tun_name, 'txqueuelen', str(self.tun_txqueue[session_name])], stderr=devnull)
+
+				if session_name in self.tun_route:
+					if self.tun_route[session_name]:
+						with open(os.devnull, 'w') as devnull:
+							for route in self.tun_route[session_name]: #rtrt
+								if route in self.route_metric:
+									if self.route_metric[route][session_name] == -1:
+										if len(self.route_metric[route]) > 1:
+											self.route_metric[route][session_name] = 327670
+											subprocess.call(['ip', 'route', 'add', route, 'metric', '327670', 'dev', _tun_name], stderr=devnull)
+										else:
+											self.route_metric[route][session_name] = 1
+											subprocess.call(['ip', 'route', 'add', route, 'metric', '1', 'dev', _tun_name], stderr=devnull)
+									else:
+										subprocess.call(['ip', 'route', 'add', route, 'metric', str(self.route_metric[route][session_name]), 'dev', _tun_name], stderr=devnull)
+								else:
+									subprocess.call(['ip', 'route', 'del', route], stderr=devnull)
+									subprocess.call(['ip', 'route', 'add', route, 'dev', _tun_name], stderr=devnull)
+
+			self.server.s_udts[conn.UDTSOCKET.UDTSOCKET] = session_name
 			self.server.zsess[session_name] = (_tun, conn , addr)
-			self.server.ztuns[_tun.fileno()] = _tun
-			self.server.s_tuns[_tun.fileno()] = self.server.s_udts[conn.UDTSOCKET.UDTSOCKET] = session_name
-
-			_tun.up()
+			self.tun_rtt[session_name] = -1
 
 			if self.encrypt or session_name in self.sess_encrypt_mode:
 				if session_name in self.sess_encrypt_mode:
@@ -3349,8 +3784,9 @@ class _xWHandler:
 
 			if self.io_mode == self.IO_NONBLOCK:
 				#io_mode == IO_NONBLOCK, single thread epoll to handle udt&tun events
-				flag = fcntl.fcntl(_tun.fileno(), fcntl.F_GETFL)
-    				fcntl.fcntl(_tun.fileno(), fcntl.F_SETFL, flag | os.O_NONBLOCK)
+				if _tun:
+					flag = fcntl.fcntl(_tun.fileno(), fcntl.F_GETFL)
+    					fcntl.fcntl(_tun.fileno(), fcntl.F_SETFL, flag | os.O_NONBLOCK)
 
 				conn.setblocking(False)
 
@@ -3358,34 +3794,36 @@ class _xWHandler:
 				if self.server.upolls[_n] is None:
 					self.server.upolls[_n] = udt.Epoll()
 					self.server.upolls[_n].add_usock(conn, udt4.UDT_EPOLL_IN)
-					self.server.upolls[_n].add_ssock(_tun, udt4.UDT_EPOLL_IN)
+					self.udt_relay_thread_stat[session_name] = True
+					if not _do_relay:
+						self.server.upolls[_n].add_ssock(_tun, udt4.UDT_EPOLL_IN)
 					t = threading.Thread(target=self.server.handle_event_udt_tun, args=(_n,))
 					t.daemon = True
 					t.start()
 				else:
 					self.server.upolls[_n].add_usock(conn, udt4.UDT_EPOLL_IN)
-					self.server.upolls[_n].add_ssock(_tun, udt4.UDT_EPOLL_IN)
+					self.udt_relay_thread_stat[session_name] = True
+					if not _do_relay:
+						self.server.upolls[_n].add_ssock(_tun, udt4.UDT_EPOLL_IN)
 			else:
 				#io_mode == IO_BLOCK (default), 2 threads bi-direction forwarding packages
-				t = threading.Thread(target=self.server.forward_tun_udt,args=(_tun,conn,_encrypt_mode,_compress,session_name,))
-				t.daemon = True
-				t.start()
+				if not _do_relay:
+					t = threading.Thread(target=self.server.forward_tun_udt,args=(_tun,conn,_encrypt_mode,_compress,session_name,))
+					t.daemon = True
+					t.start()
+					t = threading.Thread(target=self.server.forward_udt_tun,args=(_tun,conn,_encrypt_mode,_compress,session_name,))
+					t.daemon = True
+					t.start()
+				else:
+					t = threading.Thread(target=self.server.forward_udt_relay,args=(conn,session_name,))
+					t.daemon = True
+					t.start()
 
-				t = threading.Thread(target=self.server.forward_udt_tun,args=(_tun,conn,_encrypt_mode,_compress,session_name,))
-				t.daemon = True
-				t.start()
 
-			with open(os.devnull, 'w') as devnull:
-				subprocess.call(['ip', 'link', 'set', _tun_name, 'txqueuelen', str(self.tun_txqueue[session_name])], stderr=devnull)
-
-			if session_name in self.tun_route:
-				if self.tun_route[session_name]:
-					with open(os.devnull, 'w') as devnull:
-						for route in self.tun_route[session_name]:
-							subprocess.call(['ip', 'route', 'del', route], stderr=devnull)
-							subprocess.call(['ip', 'route', 'add', route, 'dev', _tun_name], stderr=devnull)
-
-			print "UDT tunnel", session_name, "launched, local", _tun.addr, "peer", _tun.dstaddr, "mtu", _tun.mtu, "encryption:", _encrypt_mode, "compress:", _compress, "io_mode:", self.io_mode
+			if _do_relay:
+				print "UDT relay tunnel", session_name, "launched, no tun device, io_mode:", self.io_mode
+			else:
+				print "UDT tunnel", session_name, "launched, local", _tun.addr, "peer", _tun.dstaddr, "mtu", _tun.mtu, "encryption:", _encrypt_mode, "compress:", _compress, "io_mode:", self.io_mode
 
 		except:
 			if conn:
@@ -3415,14 +3853,22 @@ class _xWHandler:
 				
 	def destroy_tunnel(self, session_name):   #ddd
 		_tun, _conn, _addr = self.server.zsess.pop(session_name, (None, None, None))
-
 		self.connected.pop(session_name, None)
-		
-		print "destroying", ''.join([session_name, '.', str(self.server._worker_id)]), _tun, _conn, _addr
 
-		if _tun and _conn and _addr:
-			self.server.ztuns.pop(_tun.fileno(), None)
-			self.server.s_tuns.pop(_tun.fileno(), None)
+		self.tun_rtt.pop(session_name, None)
+		if session_name in self.tun_route:
+			for _route in self.tun_route[session_name]:
+				self.route_metric[_route][session_name] = -1
+
+		if _tun:
+			print "Destroying", ''.join([session_name, '.', str(self.server._worker_id)]), _tun, _conn, _addr
+		else:
+			print "Destroying", ''.join([session_name, '.', str(self.server._worker_id)]), _conn, _addr
+
+		if _conn and _addr:
+			if _tun:
+				self.server.ztuns.pop(_tun.fileno(), None)
+				self.server.s_tuns.pop(_tun.fileno(), None)
 			self.server.s_udts.pop(_conn.UDTSOCKET.UDTSOCKET, None)
 			self.server.udt_conns_cnt[self.server._worker_id].value -= 1
 
@@ -3434,23 +3880,28 @@ class _xWHandler:
 					_n = _conn.UDTSOCKET.UDTSOCKET % self.server.udt_thread_limit
 					if self.server.upolls[_n]:
 						self.server.upolls[_n].remove_usock(_conn)
-						self.server.upolls[_n].remove_ssock(_tun)
+						if _tun:
+							self.server.upolls[_n].remove_ssock(_tun)
 				except:
 					pass
 
 			try:
-				_tun.down()
-				_tun.close()
-				_conn.close()
-
 				#revoke mem, does it work?
-				del _tun
+				if _tun:
+					_tun.down()
+					_tun.close()
+					del _tun
+
+				_conn.close()
 				del _conn
 				del _addr
 			except:
 				pass
 
-	def setup_udt_connection(self, conn, addr):
+			if session_name in self.udt_relay_thread_stat:
+				self.udt_relay_thread_stat[session_name] = False
+
+	def setup_udt_connection(self, conn, addr):  #stud
 		try:
 			if not conn or not addr:
 				return
@@ -3548,19 +3999,47 @@ class _xWHandler:
 			_magic = {'zlib':(''.join([chr(0x78), chr(0x9c)]), 2), 'lzo':(''.join([chr(0xf0), chr(0x0), chr(0x0)]), 3)}
 			_unzip = lambda s : eval(_compress).decompress(s) if _compress and _magic[_compress][0] in s[:_magic[_compress][1]] else s
 			_forward2_tun = lambda s : self.server.zsess[_session][0].write(_unzip(self.decrypt_package(s, _encrypt_mode, _session))) if _encrypt_mode else self.server.zsess[_session][0].write(_unzip(s))
+			_repack = lambda s : ''.join([struct.pack('!H', len(s)), s])
 
 			try:
 				#for i in xrange(10):
-				_forward2_tun(u.recv(struct.unpack('!H', u.recv(2))[0]))
-
+				if _session not in self.udt_relay:
+					_forward2_tun(u.recv(struct.unpack('!H', u.recv(2))[0]))
+				else:
+					_from, _to = self.udt_relay[_session]
+					if _session == _from:
+						_to_s = _to
+					else:
+						_to_s = _from
+					_, _to_usock, _ = self.server.zsess.get(_to_s, (None, None, None))
+					if _to_usock:
+						#print "relaying tunnel", _session, "to", self.udt_relay[_session]
+						_buf = u.recv(struct.unpack('!H', u.recv(2))[0])
+						_to_usock.send(_repack(_buf))
+					else:
+						#relay two sides not full connected yet
+						continue
 			except udt4.UDTException as e:
 				if e[0] == udt4.EASYNCRCV:
 					#recv buffer empty, no more data to read
 					#print "recv", i, "packages from udt and write in", _t2 - _t1, "secs"
 					continue
+				elif e[0] == udt4.EASYNCSND:
+					#send buffer full, just for relaying case
+					if _to_s in self.server.udt_send_buf:
+						self.server.udt_send_buf[_to_s].append(_buf)
+					else:
+						self.server.udt_send_buf[_to_s] = deque([_buf])
+					_ux = _conn.UDTSOCKET.UDTSOCKET % self.server.udt_thread_limit
+					self.server.upolls[_ux].remove_usock(u)
+					self.server.upolls[_ux].add_usock(u, udt4.UDT_EPOLL_IN|udt4.UDT_EPOLL_OUT)
 				if u.getsockstate() > 5:
 					self.server.upolls[_un % self.server.udt_thread_limit].remove_usock(u)
-
+					self.udt_relay_thread_stat[_session] = False
+			except IOError as e:
+				if e.errno == errno.EINVAL:
+					#illegal data, maybe tunnel peer shutdown suddenly
+					continue
 		for u in sets[1]:
 			_un = u.UDTSOCKET.UDTSOCKET
 			if _un in self.server.s_udts:
