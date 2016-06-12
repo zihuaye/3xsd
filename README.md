@@ -14,6 +14,7 @@ a 'warp drive' server. Written in python, take the full power of multi-cores.
 ###3nsd - dns server
        supporting: only A record resolution, domainname failover(refer to conf file),
        ip icmp probe & hide when fail, round robbin ip resolving
+       global DNS Left-Right Range Resolve(LRRR)(experimental)
        
 ###3zsd - proxy server
        supporting: load balance backend servers, in-mem file caching & 
@@ -32,6 +33,8 @@ a 'warp drive' server. Written in python, take the full power of multi-cores.
        tunnel ip/mtu/txqueuelen/route define, auto create/recreate/destroy
        encrypt packages through AES-128-ECB/CBC/CFB
        tunnel on-the-fly compress with zlib/lzo
+       tunnel data relaying
+       route metric, routing data through different path, depending on tunnel rtt(choose the best one)
 
 More to find in .conf file.
 
