@@ -1,3 +1,9 @@
+v0.0.24  2016.06.12
+added:
+  3wdd tunnel data relay option, see .conf, for systems not supporting tun interface creating
+  3wdd route metric, routing data through different path, depending on tunnel rtt(choose the best one)
+  3nsd global DNS Left-Right Range Resolve(LRRR), see white paper and .conf(experimental)
+
 v0.0.23  2016.04.02
 added:
   3wdd config item 'io_mode' : block, default(block), non_block
