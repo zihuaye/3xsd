@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset='utf-8'>
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+    <link href='https://fonts.googleapis.com/css?family=Architects+Daughter' rel='stylesheet' type='text/css'>
+    <link rel="stylesheet" type="text/css" href="stylesheets/stylesheet.css" media="screen">
+    <link rel="stylesheet" type="text/css" href="stylesheets/github-light.css" media="screen">
+    <link rel="stylesheet" type="text/css" href="stylesheets/print.css" media="print">
+
+    <!--[if lt IE 9]>
+    <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+
+    <title>3xsd by zihuaye</title>
+  </head>
+
+  <body>
+    <header>
+      <div class="inner">
+        <h1>3xsd</h1>
+        <h2>3xsd is a native epoll server serving TCP/UDP connections, a high performance static web server, a failover dns server, a http-based distributed file server, a load-balance proxy-cache server, and a &#39;warp drive&#39; server. Written in python, take the full power of multi-cores.</h2>
+        <a href="https://github.com/zihuaye/3xsd" class="button"><small>View project on</small> GitHub</a>
+      </div>
+    </header>
+
+    <div id="content-wrapper">
+      <div class="inner clearfix">
+        <section id="main-content">
+          <h2>
+<a id="3xsd" class="anchor" href="#3xsd" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>3xsd</h2>
+
+<p>3xsd is a native epoll server serving TCP/UDP connections, a high performance static web server, a
+failover dns server, a http-based distributed file server, a load-balance proxy-cache server, and
+a 'warp drive' server. Written in python, take the full power of multi-cores.</p>
+
+<h2>
+<a id="features-in-detail" class="anchor" href="#features-in-detail" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Features in detail:</h2>
+
+<h3>
+<a id="3wsd---web-server" class="anchor" href="#3wsd---web-server" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>3wsd - web server</h3>
+
+<pre><code>   supporting: static files, event driven(epoll), using mmap &amp; sendfile to send files,
+   in-mem xcache, transparent gzip content transfer with fixed length(small file) &amp; 
+   chunked(large file), persistent storage of gzip files,
+   partial support of WebDAV(PUT/DELETE), pipelining support
+</code></pre>
+
+<h3>
+<a id="3nsd---dns-server" class="anchor" href="#3nsd---dns-server" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>3nsd - dns server</h3>
+
+<pre><code>   supporting: only A record resolution, domainname failover(refer to conf file),
+   ip icmp probe &amp; hide when fail, round robbin ip resolving
+   global DNS Left-Right Range Resolve(LRRR)(experimental)
+</code></pre>
+
+<h3>
+<a id="3zsd---proxy-server" class="anchor" href="#3zsd---proxy-server" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>3zsd - proxy server</h3>
+
+<pre><code>   supporting: load balance backend servers, in-mem file caching &amp; 
+   persistent cache file storage
+</code></pre>
+
+<h3>
+<a id="3fsd---distribute-web-file-system" class="anchor" href="#3fsd---distribute-web-file-system" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>3fsd - distribute web file system</h3>
+
+<pre><code>   supporting: mass unlimitted file storage, easy to expand,
+   O(1) location algorithm, non-centralized, can work with standard web server(WebDAV)
+   in proxy mode, file redundancy, file persistent caching
+</code></pre>
+
+<h3>
+<a id="3wdd---warp-drive-server" class="anchor" href="#3wdd---warp-drive-server" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>3wdd - 'warp drive' server</h3>
+
+<pre><code>   supporting: data tunneling over UDT and tun,
+   better congestion control than TCP/UDP over wan link,
+   better thoughput(above 80%) over wan link, refer to:
+   http://www.c-s-a.org.cn/ch/reader/create_pdf.aspx?file_no=20091035
+   tunnel ip/mtu/txqueuelen/route define, auto create/recreate/destroy
+   encrypt packages through AES-128-ECB/CBC/CFB
+   tunnel on-the-fly compress with zlib/lzo
+   tunnel data relaying
+   route metric, routing data through different path, depending on tunnel rtt(choose the best one)
+</code></pre>
+
+<p>More to find in .conf file.</p>
+
+<h2>
+<a id="performance" class="anchor" href="#performance" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Performance:</h2>
+
+<h3>
+<a id="3wsd" class="anchor" href="#3wsd" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>3wsd:</h3>
+
+<p>Small file under 1KB single process test(full in-mem), contrast with nginx configuring
+  accept_mutex off, 80% performance.
+  Multi processes test, with reuse_port enabling kernel, 95% performance of nginx(and beyond,
+  may be 105% or more, based on process number, I tested 2-4).
+  The tests above is not quite strict， but I just want to say that it's fast enough.</p>
+
+<p>And with pipelining enabled, 3wsd will perform better with 3-4 requests/send(5%-10%
+  performance increase), 2 requests/send have the same speed with non-piplining.</p>
+
+<h3>
+<a id="3zsd" class="anchor" href="#3zsd" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>3zsd:</h3>
+
+<p>About 80% performance of 3wsd.</p>
+
+<h3>
+<a id="3nsd" class="anchor" href="#3nsd" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>3nsd:</h3>
+
+<p>Fast enough...about 2800-3000 queries/s per processes, with 1GHz bcm2709 4-cores ARMv7
+  cpu testing, better when multi-processes with reuse_port enabling kernel.</p>
+
+<h3>
+<a id="3fsd" class="anchor" href="#3fsd" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>3fsd:</h3>
+
+<p>Same with 3zsd.</p>
+
+<h3>
+<a id="3wdd" class="anchor" href="#3wdd" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>3wdd:</h3>
+
+<p>Early testing indicated that:
+  UDT tunnel(no encrypt) performing 50%-60% speed of direct TCP connection with ZetaTCP,
+  and package lost rate remaining below 0.6%, while direct connection has 1.4%-3%.
+  (Test CN-US WAN link with 150ms-280ms latency, through the always-jammed CUCN submarine cable)
+  However, UDT tunnel beats normal TCP connection without ZetaTCP, with 50% - 4 times
+  (commonly 1-2 times) outperforming.(v)(Test link like above)
+  And an encrypted UDT tunnel will has 50% performance decrease.</p>
+
+<h3>
+<a id="more-performance" class="anchor" href="#more-performance" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>More performance:</h3>
+
+<p>There are at lease two ways to increase the performance of 3xsd:</p>
+
+<pre><code>   1.Install Cython, and rename _3xsd.py to _3xsd.pyx, run it. 
+   Cython will compile _3xsd.py lib into a _3xsd.so file, using static type
+   declarations. This can gain about 5%-6% performance increasement.
+   2.Use PyPy.This can gain about 10%-15% performance increasement(or more).
+</code></pre>
+
+<h1>
+<a id="os-requirement--install" class="anchor" href="#os-requirement--install" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>OS requirement &amp; install:</h1>
+
+<p>CentOS 6/7 with python 2.6/2.7, Debian 6/7. Python 2.7 recommended.</p>
+
+<p>Doing this before running the program(minimal requirement):</p>
+
+<pre><code>   yum install python-gevent pysendfile python-setproctitle python-psutil python-pip
+
+   (python-pip is optional if install dpkt)
+</code></pre>
+
+<p>Dpkt module is also needed when running 3nsd DNS server, pip install it.</p>
+
+<p>If you want to use 3wdd, python-pytun, pyudt4, pycrypto, python-lzo are also needed.</p>
+
+<pre><code>   yum install python-crypto2.6 python-lzo
+</code></pre>
+
+<p>will quickly install pycrypto(probably do some 'linking' works) and lzo. The other two depended on pip install.</p>
+
+<p>Probably you need this easy-install.pth file in python's site-packages dir:</p>
+
+<pre><code>   import sys; sys.__plen = len(sys.path)
+   ./pycrypto-2.6.1-py2.6-linux-x86_64.egg
+   ./pyudt4-0.6.0-py2.6-linux-x86_64.egg
+   import sys; new=sys.path[sys.__plen:]; del sys.path[sys.__plen:]; p=getattr(sys,'__egginsert',0); sys.path[p:p]=new;          sys.__egginsert = p+len(new)
+</code></pre>
+
+<p>I provide a pre-compiled package <a href="https://github.com/zihuaye/3xsd/blob/master/pyudt_tun-centos6-x86_64.tar.gz">pyudt_tun-centos6-x86_64.tar.gz</a> to simplify
+the installation procedure of pyudt4 &amp; python-pytun.</p>
+
+<p>Be aware of pyudt4 having some bugs, you'd better download it's source code of epoll-fixes branch and 
+apply the patch I offered. See changelog.txt v0.0.20  2016.03.07 fixed section for detail.
+(Already included in <a href="https://github.com/zihuaye/3xsd/blob/master/pyudt_tun-centos6-x86_64.tar.gz">pyudt_tun-centos6-x86_64.tar.gz</a>)</p>
+
+<p>Or, of cause you can let pip do it all for you(not including patching pyudt4):</p>
+
+<pre><code>   pip install 3xsd
+</code></pre>
+
+<p>In a debian, you can use apt-get to install python-pip(pip) or python-setuptools(easy_install),
+then to install the packages following.</p>
+
+<p>Python Packages(Modules) version reference:</p>
+
+<pre><code>   gevent==0.13.8(1.0.1, 1.1)
+   greenlet==0.4.2
+   pysendfile==2.0.1
+   setproctitle==1.0.1
+   psutil==0.6.1
+   dpkt==1.6(1.8.6)
+   python-pytun==2.2.1
+   pyudt4==0.6.0(epoll-fixes branch)
+   pycrypto==2.6.1
+   python-lzo==1.8
+</code></pre>
+
+<p>System libs version reference:</p>
+
+<pre><code>   libevent-1.4.13-4(not actually used, just needed for gevent to function)
+   udt-4.11-6
+   lzo-2.03-3.1
+</code></pre>
+
+<p>To install a module of specific version(like gevent 0.13.8), you can:</p>
+
+<pre><code>   pip install gevent==0.13.8
+</code></pre>
+
+<p>This will install the latest version of gevent(pypy will need it):</p>
+
+<pre><code>   pip install git+git://github.com/surfly/gevent.git#egg=gevent
+</code></pre>
+        </section>
+
+        <aside id="sidebar">
+          <a href="https://github.com/zihuaye/3xsd/zipball/master" class="button">
+            <small>Download</small>
+            .zip file
+          </a>
+          <a href="https://github.com/zihuaye/3xsd/tarball/master" class="button">
+            <small>Download</small>
+            .tar.gz file
+          </a>
+
+          <p class="repo-owner"><a href="https://github.com/zihuaye/3xsd"></a> is maintained by <a href="https://github.com/zihuaye">zihuaye</a>.</p>
+
+          <p>This page was generated by <a href="https://pages.github.com">GitHub Pages</a> using the Architect theme by <a href="https://twitter.com/jasonlong">Jason Long</a>.</p>
+        </aside>
+      </div>
+    </div>
+
+  
+  </body>
+</html>
