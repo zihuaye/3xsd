@@ -718,8 +718,9 @@ class _Z_EpollServer(StreamServer):
 								_target_session_rtt = -1
 								_fixed_metric = 0  #0 for dynamic, >0 for fixed
 								for _session in self.handler.route_metric[_route]:
-									if _session in self.handler.route_metric_fixed[_route]:
-										_fixed_metric = self.handler.route_metric_fixed[_route][_session]
+									if _route in self.handler.route_metric_fixed:
+										if _session in self.handler.route_metric_fixed[_route]:
+											_fixed_metric = self.handler.route_metric_fixed[_route][_session]
 									if _session in self.handler.tun_rtt:
 										_rtt_old=self.handler.route_metric[_route][_session]
 										_rtt = self.handler.route_metric[_route][_session] = int(self.handler.tun_rtt[_session] * 10)
