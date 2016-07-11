@@ -14,7 +14,7 @@
 # All 3 party modules copyright go to their authors(see their licenses).
 #
 
-__version__ = "0.0.24"
+__version__ = "0.0.25"
 
 import os, sys, io, time, calendar, random, multiprocessing, threading
 import shutil, mmap, sendfile, zlib, gzip, lzo, copy, setproctitle
@@ -29,10 +29,8 @@ from gevent.server import StreamServer
 from gevent.coros import Semaphore
 from udt4 import pyudt as udt
 from Crypto.Cipher import AES
+from Crypto.Cipher import Blowfish
 from Crypto import Random
-#from writev import writev
-#from meliae import scanner
-from pprint import pprint
 
 Port = 8000	#Listening port number
 Backlog = 1000	#Listening backlog
@@ -3574,6 +3572,8 @@ class _xWHandler:
 					self.encrypt_mode = AES.MODE_CBC
 				elif _value == 'aes-128-cfb':
 					self.encrypt_mode = AES.MODE_CFB
+				elif _value == 'blowfish-cbc':
+					self.encrypt_mode = Blowfish.MODE_CBC + 100 #diff from aes
 				else:
 					self.encrypt = False
 			elif name == 'io_mode':
@@ -3618,6 +3618,7 @@ class _xWHandler:
 					if v[5]:
 						_em_zip = v[5].lower().split(',')
 						_em = _em_zip[0]
+
 						if _em == 'aes-128-cbc':
 							self.sess_encrypt_mode[name] = AES.MODE_CBC
 						elif _em == 'aes-128-cfb':
@@ -3626,6 +3627,9 @@ class _xWHandler:
 							self.sess_encrypt_mode[name] = AES.MODE_ECB
 							if name not in self.aes:
 								self.aes[name] = AES.new(self.e_token[name], AES.MODE_ECB)
+						elif _em == 'blowfish-cbc':
+							self.sess_encrypt_mode[name] = Blowfish.MODE_CBC + 100
+
 						if len(_em_zip) > 1:
 							if _em_zip[1] == 'zlib' or _em_zip[1] == 'compress':
 								self.compress_tunnel[name] = 'zlib'
@@ -3965,25 +3969,33 @@ class _xWHandler:
 			raise
 
 	def decrypt_package(self, _buf, _encrypt_mode, _session):
-		BS = AES.block_size
 		unpad = lambda s : s[0:-ord(s[-1])]
-
 		if _encrypt_mode == AES.MODE_CBC or _encrypt_mode == AES.MODE_CFB:
-			_aes = AES.new(self.e_token[_session], _encrypt_mode, _buf[:BS])
-			return unpad(_aes.decrypt(_buf[BS:]))
+			_aes = AES.new(self.e_token[_session], _encrypt_mode, _buf[:AES.block_size])
+			return unpad(_aes.decrypt(_buf[AES.block_size:]))
+		elif _encrypt_mode == Blowfish.MODE_CBC + 100:
+			_blf = Blowfish.new(self.e_token[_session], _encrypt_mode - 100, _buf[:Blowfish.block_size])
+			return unpad(_blf.decrypt(_buf[Blowfish.block_size:]))
 		else:
 			return unpad(self.aes[_session].decrypt(_buf))
 
 
 	def encrypt_package(self, _buf, _encrypt_mode, _session):
-		BS = AES.block_size
-		pad = lambda s: ''.join([s, (BS - len(s) % BS) * chr(BS - len(s) % BS)])
-
 		if _encrypt_mode == AES.MODE_CBC or _encrypt_mode == AES.MODE_CFB:
+			BS = AES.block_size
+			pad = lambda s: ''.join([s, (BS - len(s) % BS) * chr(BS - len(s) % BS)])
 			_iv = Random.new().read(BS)
 			_aes = AES.new(self.e_token[_session], _encrypt_mode, _iv)
 			return ''.join([_iv, _aes.encrypt(pad(_buf))])
+		elif _encrypt_mode == Blowfish.MODE_CBC + 100:
+			BS = Blowfish.block_size
+			pad = lambda s: ''.join([s, (BS - len(s) % BS) * chr(BS - len(s) % BS)])
+			_iv = Random.new().read(BS)
+			_blf = Blowfish.new(self.e_token[_session], _encrypt_mode - 100, _iv)
+			return ''.join([_iv, _blf.encrypt(pad(_buf))])
 		else:
+			BS = AES.block_size
+			pad = lambda s: ''.join([s, (BS - len(s) % BS) * chr(BS - len(s) % BS)])
 			return self.aes[_session].encrypt(pad(_buf))
 
 
