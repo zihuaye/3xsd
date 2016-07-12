@@ -3,7 +3,7 @@ added:
   3wdd blowfish-cbc encrypt method
 
 fixed:
-  3wdd bugs in route metric function
+  3wdd bugs in route metric function: _route not in route_metric_fixed[], no key value error
 
 v0.0.24  2016.06.12
 added:
