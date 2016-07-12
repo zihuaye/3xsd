@@ -31,7 +31,7 @@ a 'warp drive' server. Written in python, take the full power of multi-cores.
        better thoughput(above 80%) over wan link, refer to this report:
        http://www.c-s-a.org.cn/ch/reader/create_pdf.aspx?file_no=20091035
        tunnel ip/mtu/txqueuelen/route define, auto create/recreate/destroy
-       encrypt packages through AES-128-ECB/CBC/CFB and Blowfish-CBC
+       encrypt packages through AES-128-ECB/CBC/CFB and Blowfish-CBC/CFB/CTR
        tunnel on-the-fly compress with zlib/lzo, tunnel data relaying
        route metric, routing data through different path, depending on tunnel rtt(choose the best one)
 
