@@ -1,6 +1,6 @@
 v0.0.25  2016.07.12
 added:
-  3wdd blowfish-cbc encrypt method(it felt that's faster than aes-cbc?)
+  3wdd blowfish-cbc/cfb/ctr encrypt method(it felt that's faster than aes-cbc/cfb/ecb?)
 
 fixed:
   3wdd bugs in route metric function: _route not in route_metric_fixed[], no key value error
