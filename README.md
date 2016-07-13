@@ -66,6 +66,7 @@ More to find in .conf file.
   (Test CN-US WAN link with 150ms-280ms latency, through the always-jammed CUCN submarine cable)
   However, UDT tunnel beats normal TCP connection without ZetaTCP, with 50% - 4 times
   (commonly 1-2 times) outperforming.(v)(Test link like above)
+  
   Update:
   And an encrypted UDT tunnel with AES-CBC/CFB will has 50% performance decrease(because of the 
   iv doubled transfer data).
