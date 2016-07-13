@@ -3574,6 +3574,8 @@ class _xWHandler:
 					self.encrypt_mode = AES.MODE_CBC
 				elif _value == 'aes-128-cfb':
 					self.encrypt_mode = AES.MODE_CFB
+				elif _value == 'aes-128-ctr':
+					self.encrypt_mode = AES.MODE_CTR
 				elif _value == 'blowfish-cbc':
 					self.encrypt_mode = Blowfish.MODE_CBC + 100 #diff from aes
 				elif _value == 'blowfish-cfb':
@@ -3629,6 +3631,8 @@ class _xWHandler:
 							self.sess_encrypt_mode[name] = AES.MODE_CBC
 						elif _em == 'aes-128-cfb':
 							self.sess_encrypt_mode[name] = AES.MODE_CFB
+						elif _em == 'aes-128-ctr':
+							self.sess_encrypt_mode[name] = AES.MODE_CTR
 						elif _em == 'on' or _em == 'aes-128-ecb':
 							self.sess_encrypt_mode[name] = AES.MODE_ECB
 							if name not in self.aes:
@@ -3980,38 +3984,56 @@ class _xWHandler:
 
 	def decrypt_package(self, _buf, _encrypt_mode, _session):
 		unpad = lambda s : s[0:-ord(s[-1])]
-		if _encrypt_mode == Blowfish.MODE_CBC + 100 or _encrypt_mode == Blowfish.MODE_CFB + 100:
+		if _encrypt_mode == Blowfish.MODE_CBC + 100:
 			_blf = Blowfish.new(self.e_token[_session], _encrypt_mode - 100, _buf[:Blowfish.block_size])
 			return unpad(_blf.decrypt(_buf[Blowfish.block_size:]))
+		elif _encrypt_mode == Blowfish.MODE_CFB + 100:
+			_blf = Blowfish.new(self.e_token[_session], _encrypt_mode - 100, _buf[:Blowfish.block_size])
+			return _blf.decrypt(_buf[Blowfish.block_size:])
 		elif _encrypt_mode == Blowfish.MODE_CTR + 100:
 			_blf = Blowfish.new(self.e_token[_session], _encrypt_mode - 100, counter=Counter.new(64))
-			return unpad(_blf.decrypt(_buf))
-		elif _encrypt_mode == AES.MODE_CBC or _encrypt_mode == AES.MODE_CFB:
+			return _blf.decrypt(_buf)
+		elif _encrypt_mode == AES.MODE_CBC:
 			_aes = AES.new(self.e_token[_session], _encrypt_mode, _buf[:AES.block_size])
 			return unpad(_aes.decrypt(_buf[AES.block_size:]))
+		elif _encrypt_mode == AES.MODE_CFB:
+			_aes = AES.new(self.e_token[_session], _encrypt_mode, _buf[:AES.block_size])
+			return _aes.decrypt(_buf[AES.block_size:])
+		elif _encrypt_mode == AES.MODE_CTR:
+			_aes = AES.new(self.e_token[_session], _encrypt_mode, counter=Counter.new(128))
+			return _aes.decrypt(_buf)
 		else:
 			#AES.MODE_ECB
 			return unpad(self.aes[_session].decrypt(_buf))
 
 
 	def encrypt_package(self, _buf, _encrypt_mode, _session):
-		if _encrypt_mode == Blowfish.MODE_CBC + 100 or _encrypt_mode == Blowfish.MODE_CFB + 100:
+		if _encrypt_mode == Blowfish.MODE_CBC + 100:
 			BS = Blowfish.block_size
 			pad = lambda s: ''.join([s, (BS - len(s) % BS) * chr(BS - len(s) % BS)])
 			_iv = Random.new().read(BS)
 			_blf = Blowfish.new(self.e_token[_session], _encrypt_mode - 100, _iv)
 			return ''.join([_iv, _blf.encrypt(pad(_buf))])
+		elif _encrypt_mode == Blowfish.MODE_CFB + 100:  #CFB OFB CTR: padding is not required
+			_iv = Random.new().read(Blowfish.block_size)
+			_blf = Blowfish.new(self.e_token[_session], _encrypt_mode - 100, _iv)
+			return ''.join([_iv, _blf.encrypt(_buf)])
 		elif _encrypt_mode == Blowfish.MODE_CTR + 100:
-			BS = Blowfish.block_size
-			pad = lambda s: ''.join([s, (BS - len(s) % BS) * chr(BS - len(s) % BS)])
 			_blf = Blowfish.new(self.e_token[_session], _encrypt_mode - 100, counter=Counter.new(64))
-			return _blf.encrypt(pad(_buf))
-		elif _encrypt_mode == AES.MODE_CBC or _encrypt_mode == AES.MODE_CFB:
+			return _blf.encrypt(_buf)
+		elif _encrypt_mode == AES.MODE_CBC:
 			BS = AES.block_size
 			pad = lambda s: ''.join([s, (BS - len(s) % BS) * chr(BS - len(s) % BS)])
 			_iv = Random.new().read(BS)
 			_aes = AES.new(self.e_token[_session], _encrypt_mode, _iv)
 			return ''.join([_iv, _aes.encrypt(pad(_buf))])
+		elif _encrypt_mode == AES.MODE_CFB:  #CFB OFB CTR: padding is not required
+			_iv = Random.new().read(AES.block_size)
+			_aes = AES.new(self.e_token[_session], _encrypt_mode, _iv)
+			return ''.join([_iv, _aes.encrypt(_buf)])
+		elif _encrypt_mode == AES.MODE_CTR:
+			_aes = AES.new(self.e_token[_session], _encrypt_mode, counter=Counter.new(128))
+			return _aes.encrypt(_buf)
 		else:
 			#AES.MODE_ECB
 			BS = AES.block_size
