@@ -68,8 +68,8 @@ More to find in .conf file.
   (commonly 1-2 times) outperforming.(v)(Test link like above)
   
   Update:
-  And an encrypted UDT tunnel with AES-CBC/CFB will has 50% performance decrease(because of the 
-  iv doubled transfer data).
+  And an encrypted UDT tunnel with AES-CBC/CFB will has 50% performance decrease(because the 
+  method itself processes doubled size of data, and extra iv/padding data transfer).
   Now with a Blowfish-CTR method, tunnel data transfer performance is closed to raw non-encrypt 
   tunnel. I believe that with an INTEL AES-NI supported CPU(like XEON E3-1240/1270), AES-CTR
   can also do it.
