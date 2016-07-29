@@ -68,12 +68,11 @@
 
 <pre><code>   supporting: data tunneling over UDT and tun,
    better congestion control than TCP/UDP over wan link,
-   better thoughput(above 80%) over wan link, refer to:
+   better thoughput(above 80%) over wan link, refer to this report:
    http://www.c-s-a.org.cn/ch/reader/create_pdf.aspx?file_no=20091035
    tunnel ip/mtu/txqueuelen/route define, auto create/recreate/destroy
-   encrypt packages through AES-128-ECB/CBC/CFB
-   tunnel on-the-fly compress with zlib/lzo
-   tunnel data relaying
+   encrypt packages through AES-128-ECB/CBC/CFB/CTR and Blowfish-CBC/CFB/CTR
+   tunnel on-the-fly compress with zlib/lzo, tunnel data relaying
    route metric, routing data through different path, depending on tunnel rtt(choose the best one)
 </code></pre>
 
@@ -113,13 +112,9 @@
 <h3>
 <a id="3wdd" class="anchor" href="#3wdd" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>3wdd:</h3>
 
-<p>Early testing indicated that:
-  UDT tunnel(no encrypt) performing 50%-60% speed of direct TCP connection with ZetaTCP,
-  and package lost rate remaining below 0.6%, while direct connection has 1.4%-3%.
-  (Test CN-US WAN link with 150ms-280ms latency, through the always-jammed CUCN submarine cable)
-  However, UDT tunnel beats normal TCP connection without ZetaTCP, with 50% - 4 times
-  (commonly 1-2 times) outperforming.(v)(Test link like above)
-  And an encrypted UDT tunnel will has 50% performance decrease.</p>
+<p>Early testing indicated that: UDT tunnel(no encrypt) performing 50%-60% speed of direct TCP connection with ZetaTCP, and package lost rate remaining below 0.6%, while direct connection has 1.4%-3%. (Test CN-US WAN link with 150ms-280ms latency, through the always-jammed CUCN submarine cable) However, UDT tunnel beats normal TCP connection without ZetaTCP, with 50% - 4 times (commonly 1-2 times) outperforming.(v)(Test link like above)
+
+Update: And an encrypted UDT tunnel with AES-CBC/CFB will has 50% performance decrease(because the method itself processes doubled size of data, and extra iv/padding data transfer). Now with a Blowfish-CTR method, tunnel data transfer performance is closed to raw non-encrypt tunnel. I believe that with an INTEL AES-NI supported CPU(like XEON E3-1240/1270), AES-CTR can also do it.</p>
 
 <h3>
 <a id="more-performance" class="anchor" href="#more-performance" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>More performance:</h3>
