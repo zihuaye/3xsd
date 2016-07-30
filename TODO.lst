@@ -1,4 +1,7 @@
-3wdd - Optimize encryption logic: CFB/OFB/CTR padding is not required.
+3wdd - Optimize encryption logic: CFB/OFB/CTR padding is not required.(done)
+
 3wdd - Optimize encrypt codes, now with a Blowfish-ctr method, tunnel data transfer performance
        is closed to raw non-encrypt tunnel. I believe that with a intel AES-NI supported CPU
-       (like XEON E3-1240/1270), AES-128-CTR can also do it.
+       (like XEON E3-1240/1270), AES-128-CTR can also do it.(done)
+
+3nsd - GeoIP based name resolving.
