@@ -4,4 +4,6 @@
        is closed to raw non-encrypt tunnel. I believe that with a intel AES-NI supported CPU
        (like XEON E3-1240/1270), AES-128-CTR can also do it.(done)
 
-3nsd - GeoIP based name resolving.
+3nsd - GeoIP based name resolving.(src ip based geo resolving done)
+
+3wdd - check_3wd() var: _fixed_metric bug fix.(done)
