@@ -6,6 +6,8 @@
 
 3nsd - GeoIP based name resolving.(src ip based geo resolving done)
 
-3wdd - check_3wd() var: _fixed_metric bug fix.(done)
+3wdd - In check_3wd() var: _fixed_metric bug fix.(done)
+
+3wdd - Add scripts define on tunnel up/down/route-change to execute.(done)
 
 will update codes at v0.0.26
