@@ -7,3 +7,5 @@
 3nsd - GeoIP based name resolving.(src ip based geo resolving done)
 
 3wdd - check_3wd() var: _fixed_metric bug fix.(done)
+
+will update codes at v0.0.26
