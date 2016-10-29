@@ -14,13 +14,13 @@
 # All 3 party modules copyright go to their authors(see their licenses).
 #
 
-__version__ = "0.0.25"
+__version__ = "0.0.26"
 
 import os, sys, io, time, calendar, random, multiprocessing, threading
 import shutil, mmap, sendfile, zlib, gzip, lzo, copy, setproctitle
 import _socket as socket
 import select, errno, gevent, dpkt, ConfigParser, hashlib, struct, shelve
-import pytun, udt4, subprocess, fcntl, gc
+import pytun, udt4, subprocess, fcntl, geoip2.database
 
 from distutils.version import StrictVersion
 from datetime import datetime
@@ -721,6 +721,8 @@ class _Z_EpollServer(StreamServer):
 									if _route in self.handler.route_metric_fixed:
 										if _session in self.handler.route_metric_fixed[_route]:
 											_fixed_metric = self.handler.route_metric_fixed[_route][_session]
+										else:
+											_fixed_metric = 0
 									if _session in self.handler.tun_rtt:
 										_rtt_old=self.handler.route_metric[_route][_session]
 										_rtt = self.handler.route_metric[_route][_session] = int(self.handler.tun_rtt[_session] * 10)
@@ -747,6 +749,11 @@ class _Z_EpollServer(StreamServer):
 								if _target_session:
 									#change the default outgoing path(dev) for a route
 									subprocess.call(['ip', 'route', 'replace', _route, 'metric', str('0'), 'dev', ''.join([_target_session, '.', str(self._worker_id)])], stderr=devnull)
+
+									_rtch_script = self.handler.rtch_script.get(_target_session, None)
+									if _rtch_script:
+										subprocess.call([_rtch_script, ''.join([_target_session, '.', str(self._worker_id)])], stderr=devnull)
+
 							else:
 								#only one path, no need to change
 								continue
@@ -756,6 +763,7 @@ class _Z_EpollServer(StreamServer):
 				del _addr
 
 				self.o_mem()
+
 		except:
 			raise
 
@@ -1793,11 +1801,13 @@ class _xDNSHandler:
 	rrn = {}
 	ttl = {}
 	stat = {}
+	geo = {}
 
 	_rra = None
 	_ttl = None
 	q = None
 	query_name = None
+	query_name_geo = None
 	answer = None
 	
 	xcache_ttl = 10
@@ -1817,6 +1827,8 @@ class _xDNSHandler:
 	lr_left_measuring = False
 	lr_right_measuring = False
 
+	geoip_db = None
+
 	def __init__(self, conn, client_address, server, config_section='3nsd'):
 		self.server = server
 		#if server.workers > 1:
@@ -1831,17 +1843,20 @@ class _xDNSHandler:
 		self.ttl = {}
 		self.rra = {}
 		self.rrn = {}
+		self.geo = {}
 
-		lr_peers = {}
-		lr_ttl = 3600
-		lr_left = ''
-		lr_right = ''
-		lr_range = ''
-		lr_range_suffix = ''
-		lr_prefix = 'lr'
-		lr_resolve = False
-		lr_left_measuring = False
-		lr_right_measuring = False
+		self.lr_peers = {}
+		self.lr_ttl = 3600
+		self.lr_left = ''
+		self.lr_right = ''
+		self.lr_range = ''
+		self.lr_range_suffix = ''
+		self.lr_prefix = 'lr'
+		self.lr_resolve = False
+		self.lr_left_measuring = False
+		self.lr_right_measuring = False
+
+		self.geoip_db = None
 
 		self.config = ConfigParser.ConfigParser()
 		if not self.config.read('3xsd.conf'):
@@ -1866,10 +1881,23 @@ class _xDNSHandler:
 			elif name == "lr_prefix":
 				if value:
 					self.lr_prefix = value.lower().strip()
+			elif name == "geoip_db":
+				if value:
+					self.geoip_db = geoip2.database.Reader(value)
 			else:
 				v = value.split(',', 1)
 				if len(v) > 1:
 					# [ttl, ip, ...]
+					if '@' in name:
+						_name, _geo = name.lower().split('@')
+
+						if _name not in self.geo:
+							self.geo[_name] = {}
+
+						for _cc in _geo.split('/'):
+							if _cc:
+								self.geo[_name][_cc] = name
+
 					self.ttl[name] = int(v[0])
 					self.rra[name] = self.ip_list(name, v[1], config_section)
 					self.rrn[name] = 0
@@ -1915,6 +1943,7 @@ class _xDNSHandler:
 		self._ttl = None
 		self.q = None
 		self.query_name = None
+		self.query_name_geo = None
 		self.answer = None
 
 	def __call__(self, events):
@@ -1966,6 +1995,32 @@ class _xDNSHandler:
 
 		return self.lr_resolve
 
+	def x_check_peer_geo(self): #cpcp
+		if self.geoip_db:
+			try:
+				_rs = self.geoip_db.country(self.addr[0])
+				_cc = None
+
+				#the country code(_cc), first match continent code, then country's iso_code
+				if hasattr(_rs.continent, "code"):
+					_cc = _rs.continent.code.lower()
+					if _cc in self.geo[self.query_name]:
+						self.query_name_geo = self.geo[self.query_name][_cc]
+				if hasattr(_rs.country, "iso_code"):
+					_cc = _rs.country.iso_code.lower()
+					if _cc in self.geo[self.query_name]:
+						self.query_name_geo = self.geo[self.query_name][_cc]
+
+				#city has not iso_code, so what's next?
+				#if hasattr(_rs.city, "iso_code"):
+				#	print "peer city code:", _rs.city.iso_code
+				#elif hasattr(_rs.city, "name"):
+				#	print "peer city name:", _rs.city.name
+
+				print "peer:", self.addr[0], "geo:", self.query_name_geo, "cc:", _cc
+			except:
+				pass
+
 	def x_parse_query(self):  #pqpq
 		self.q = dpkt.dns.DNS(self.data)
 
@@ -1973,9 +2028,15 @@ class _xDNSHandler:
 		if self.q.qd[0].cls != dpkt.dns.DNS_IN or self.q.qd[0].type != dpkt.dns.DNS_A:
 			return self.PARSE_ERROR
 		
-		self.query_name =  self.q.qd[0].name
-		self._rra = self.rra.get(self.query_name)
-		self._ttl = self.ttl.get(self.query_name)
+		self.query_name =  self.query_name_geo = self.q.qd[0].name
+
+		if self.query_name in self.geo:
+			self.x_check_peer_geo()
+			self._rra = self.rra.get(self.query_name_geo)
+			self._ttl = self.ttl.get(self.query_name_geo)
+		else:
+			self._rra = self.rra.get(self.query_name)
+			self._ttl = self.ttl.get(self.query_name)
 		
 		if self.x_check_range_resolve():
 			#It's a left-right range resolve
@@ -1992,8 +2053,8 @@ class _xDNSHandler:
 		_ttl, a, b = self.lr_peers[_peer]
 		_t = time.time()  #_t: current time
 
-		print "---------------------"
-		print _peer, self.lr_peers[_peer]
+		#print "---------------------"
+		#print _peer, self.lr_peers[_peer]
 
 		if _t <= _ttl:
 			#cache of a,b not expired
@@ -2168,8 +2229,8 @@ class _xDNSHandler:
 		self.answer = str(self.q)
 
 	def x_gen_answer(self): #gaga
-		if self.query_name in self.server.xcache:
-			_c = self.server.xcache.get(self.query_name)
+		if self.query_name_geo in self.server.xcache:
+			_c = self.server.xcache.get(self.query_name_geo)
 			if _c[0] > time.time():
 				#cache item not expired, load it and rewrite the id field of answer to match queryer's 
 				if self.q.id < 255:
@@ -2179,7 +2240,7 @@ class _xDNSHandler:
 				return
 			else:
 				#expired, clear it
-				self.server.xcache.pop(self.query_name)
+				self.server.xcache.pop(self.query_name_geo)
 
 		#cache not hit, go on handling: first to turn query into answer
 		self.q.op = dpkt.dns.DNS_RA
@@ -2187,7 +2248,8 @@ class _xDNSHandler:
 		self.q.qr = dpkt.dns.DNS_R
 		
 		_alive = 0
-		_query_name = self.query_name
+		#if not a geo resolving, self.query_name_geo is just equal to self.query_name, set by x_parse_query()
+		_query_name = self.query_name_geo
 
 		#for round robbin, shift ip list every time
 		self._rra = self.shift(self.rra.get(_query_name), self.rrn.get(_query_name))
@@ -2226,7 +2288,7 @@ class _xDNSHandler:
 		self.answer = str(self.q)
 	
 		#cache it, when expired at one ttl
-		self.server.xcache[self.query_name] = [self.xcache_ttl + time.time(), self.answer]
+		self.server.xcache[self.query_name_geo] = [self.xcache_ttl + time.time(), self.answer]
 
 	def x_send_out(self):
 		#self._wlock.acquire()
@@ -2251,6 +2313,9 @@ class _xDNSHandler:
 						gs.append(gevent.spawn(self.icmp_ping, ip))  #do works concurrently
 				gevent.joinall(gs)
 			#print "lr_peers:", self.lr_peers
+			#print "-------------------"
+			#print "self.rra: ", self.rra
+			#print "self.geo: ", self.geo
 
 	def icmp_ping(self, ip):
 		#be sure to be a gevent.socket, for concurrent reason
@@ -3502,6 +3567,9 @@ class _xWHandler:
 	route_metric = {}
 	route_metric_fixed = {}
 	routing_metric = False
+	ifup_script = {}
+	ifdown_script = {}
+	rtch_script = {}
 
 	udt_relay = {}
 	udt_relay_thread_stat = {}
@@ -3548,6 +3616,9 @@ class _xWHandler:
 		self.compress_tunnel = {}
 		self.io_mode = 0
 		self.routing_metric = False
+		self.ifup_script = {}
+		self.ifdown_script = {}
+		self.rtch_script = {}
 
 		self.config = ConfigParser.ConfigParser()
 		if not self.config.read('3xsd.conf'):
@@ -3661,6 +3732,17 @@ class _xWHandler:
 					self.tun_route[name] = []
 					for route in v[len(v) - 1].split(','):
 						if route:
+							if "ifup=" in route:
+								#not a 0.0.0.0/0 route, must be a ifup/ifdown script
+								self.ifup_script[name] = route[5:]
+								continue
+							if "ifdown=" in route:
+								self.ifdown_script[name] = route[7:]
+								continue
+							if "rtch=" in route:
+								self.rtch_script[name] = route[5:]
+								continue
+
 							if route.count('/') == 2:
 								_net, _mask, _s_metric = route.split('/')
 								route = ''.join([_net, '/', _mask])
@@ -3773,8 +3855,14 @@ class _xWHandler:
 								if route in self.route_metric:
 									if self.route_metric[route][session_name] == -1:
 										if len(self.route_metric[route]) > 1:
-											self.route_metric[route][session_name] = 327670
-											subprocess.call(['ip', 'route', 'add', route, 'metric', '327670', 'dev', _tun_name], stderr=devnull)
+											j = 0
+											for k in self.route_metric[route]:
+												if k == session_name:
+													break
+												else:
+													j += 1
+											self.route_metric[route][session_name] = 327670 + j
+											subprocess.call(['ip', 'route', 'add', route, 'metric', str(self.route_metric[route][session_name]), 'dev', _tun_name], stderr=devnull)
 										else:
 											self.route_metric[route][session_name] = 1
 											subprocess.call(['ip', 'route', 'add', route, 'metric', '1', 'dev', _tun_name], stderr=devnull)
@@ -3783,6 +3871,11 @@ class _xWHandler:
 								else:
 									subprocess.call(['ip', 'route', 'del', route], stderr=devnull)
 									subprocess.call(['ip', 'route', 'add', route, 'dev', _tun_name], stderr=devnull)
+
+				_ifup_script = self.ifup_script.get(session_name, None)
+				if _ifup_script:
+					with open(os.devnull, 'w') as devnull:
+						subprocess.call([_ifup_script, _tun_name], stderr=devnull)
 
 			self.server.s_udts[conn.UDTSOCKET.UDTSOCKET] = session_name
 			self.server.zsess[session_name] = (_tun, conn , addr)
@@ -3919,6 +4012,11 @@ class _xWHandler:
 
 			if session_name in self.udt_relay_thread_stat:
 				self.udt_relay_thread_stat[session_name] = False
+
+			_ifdown_script = self.ifdown_script.get(session_name, None)
+			if _ifdown_script:
+				with open(os.devnull, 'w') as devnull:
+					subprocess.call([_ifdown_script, ''.join([session_name, '.', str(self.server._worker_id)])], stderr=devnull)
 
 	def setup_udt_connection(self, conn, addr):  #stud
 		try:

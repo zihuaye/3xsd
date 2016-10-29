@@ -223,7 +223,8 @@ if __name__ == "__main__":
 	
 	if i_dns == 1:
 		program_name = '3nsd'
-		_3xsd.Port = 53
+		if port == 0:
+			_3xsd.Port = 53
 	elif x_dfs == 1:
 		program_name = '3fsd'
 	elif z_lbs == 1:

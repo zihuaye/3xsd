@@ -66,12 +66,12 @@ More to find in .conf file.
   (Test CN-US WAN link with 150ms-280ms latency, through the always-jammed CUCN submarine cable)
   However, UDT tunnel beats normal TCP connection without ZetaTCP, with 50% - 4 times
   (commonly 1-2 times) outperforming.(v)(Test link like above)
-  
+
   Update:
-  And an encrypted UDT tunnel with AES-CBC/CFB will has 50% performance decrease(because the 
+  And an encrypted UDT tunnel with AES-CBC/CFB will has 50% performance decrease (because the 
   method itself processes doubled size of data, and extra iv/padding data transfer).
   Now with a Blowfish-CTR method, tunnel data transfer performance is closed to raw non-encrypt 
-  tunnel. I believe that with an INTEL AES-NI supported CPU(like XEON E3-1240/1270), AES-CTR
+  tunnel. I believe that with a intel AES-NI supported CPU(like XEON E3-1240/1270), AES-128-CTR
   can also do it.
 
 ###More performance:
@@ -96,7 +96,8 @@ Dpkt module is also needed when running 3nsd DNS server, pip install it.
 
 If you want to use 3wdd, python-pytun, pyudt4, pycrypto, python-lzo are also needed.
 
-       yum install python-crypto2.6 python-lzo
+       yum install python-crypto2.6 python-lzo (for centos6)
+       yum install python2-crypto (for centos7)
 
 will quickly install pycrypto(probably do some 'linking' works) and lzo. The other two depended on pip install.
 
@@ -107,12 +108,12 @@ Probably you need this easy-install.pth file in python's site-packages dir:
        ./pyudt4-0.6.0-py2.6-linux-x86_64.egg
        import sys; new=sys.path[sys.__plen:]; del sys.path[sys.__plen:]; p=getattr(sys,'__egginsert',0); sys.path[p:p]=new;          sys.__egginsert = p+len(new)
 
-I provide a pre-compiled package [pyudt_tun-centos6-x86_64.tar.gz](https://github.com/zihuaye/3xsd/blob/master/pyudt_tun-centos6-x86_64.tar.gz) to simplify
+I provide pre-compiled package [pyudt_tun-centos6-x86_64.tar.gz](https://github.com/zihuaye/3xsd/blob/master/pyudt_tun-centos6-x86_64.tar.gz) and [pyudt_tun_lzo-centos7-x86_64.tar.gz](https://github.com/zihuaye/3xsd/blob/master/pyudt_tun_lzo-centos7-x86_64.tar.gz) to simplify
 the installation procedure of pyudt4 & python-pytun.
 
 Be aware of pyudt4 having some bugs, you'd better download it's source code of epoll-fixes branch and 
 apply the patch I offered. See changelog.txt v0.0.20  2016.03.07 fixed section for detail.
-(Already included in [pyudt_tun-centos6-x86_64.tar.gz](https://github.com/zihuaye/3xsd/blob/master/pyudt_tun-centos6-x86_64.tar.gz))
+(Already included in [pyudt_tun-centos6-x86_64.tar.gz](https://github.com/zihuaye/3xsd/blob/master/pyudt_tun-centos6-x86_64.tar.gz) and [pyudt_tun_lzo-centos7-x86_64.tar.gz](https://github.com/zihuaye/3xsd/blob/master/pyudt_tun_lzo-centos7-x86_64.tar.gz))
 
 Or, of cause you can let pip do it all for you(not including patching pyudt4):
 
