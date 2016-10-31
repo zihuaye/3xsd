@@ -92,7 +92,7 @@ Doing this before running the program(minimal requirement):
        
        (python-pip is optional if install dpkt)
   
-Dpkt module is also needed when running 3nsd DNS server, pip install it.
+Dpkt and geoip2 module are also needed when running 3nsd DNS server, pip install it.
 
 If you want to use 3wdd, python-pytun, pyudt4, pycrypto, python-lzo are also needed.
 
