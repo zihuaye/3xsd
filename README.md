@@ -1,31 +1,31 @@
-##3xsd
+# 3xsd
 3xsd is a native epoll server serving TCP/UDP connections, a high performance static web server, a
 failover dns server, a http-based distributed file server, a load-balance proxy-cache server, and
 a 'warp drive' server. Written in python, take the full power of multi-cores.
 
-##Features in detail:
+# Features in detail:
 
-###3wsd - web server
+## 3wsd - web server
        supporting: static files, event driven(epoll), using mmap & sendfile to send files,
        in-mem xcache, transparent gzip content transfer with fixed length(small file) & 
        chunked(large file), persistent storage of gzip files,
        partial support of WebDAV(PUT/DELETE), pipelining support
        
-###3nsd - dns server
+## 3nsd - dns server
        supporting: only A record resolution, domainname failover(refer to conf file),
        ip icmp probe & hide when fail, round robbin ip resolving
        global DNS Left-Right Range Resolve(LRRR)(experimental)
        
-###3zsd - proxy server
+## 3zsd - proxy server
        supporting: load balance backend servers, in-mem file caching & 
        persistent cache file storage
 
-###3fsd - distribute web file system
+## 3fsd - distribute web file system
        supporting: mass unlimitted file storage, easy to expand,
        O(1) location algorithm, non-centralized, can work with standard web server(WebDAV)
        in proxy mode, file redundancy, file persistent caching
 
-###3wdd - 'warp drive' server
+## 3wdd - 'warp drive' server
        supporting: data tunneling over UDT and tun,
        better congestion control than TCP/UDP over wan link,
        better thoughput(above 80%) over wan link, refer to this report:
@@ -37,9 +37,9 @@ a 'warp drive' server. Written in python, take the full power of multi-cores.
 
 More to find in .conf file.
 
-##Performance:
+# Performance:
 
-###3wsd:
+## 3wsd:
   Small file under 1KB single process test(full in-mem), contrast with nginx configuring
   accept_mutex off, 80% performance.
   Multi processes test, with reuse_port enabling kernel, 95% performance of nginx(and beyond,
@@ -49,17 +49,17 @@ More to find in .conf file.
   And with pipelining enabled, 3wsd will perform better with 3-4 requests/send(5%-10%
   performance increase), 2 requests/send have the same speed with non-piplining.
 
-###3zsd:
+## 3zsd:
   About 80% performance of 3wsd.
   
-###3nsd:
+## 3nsd:
   Fast enough...about 2800-3000 queries/s per processes, with 1GHz bcm2709 4-cores ARMv7
   cpu testing, better when multi-processes with reuse_port enabling kernel.
   
-###3fsd:
+## 3fsd:
   Same with 3zsd.
   
-###3wdd:
+## 3wdd:
   Early testing indicated that:
   UDT tunnel(no encrypt) performing 50%-60% speed of direct TCP connection with ZetaTCP,
   and package lost rate remaining below 0.6%, while direct connection has 1.4%-3%.
@@ -74,7 +74,7 @@ More to find in .conf file.
   tunnel. I believe that with a intel AES-NI supported CPU(like XEON E3-1240/1270), AES-128-CTR
   can also do it.
 
-###More performance:
+## More performance:
 There are at lease two ways to increase the performance of 3xsd:
 
        1.Install Cython, and rename _3xsd.py to _3xsd.pyx, run it. 
@@ -82,7 +82,7 @@ There are at lease two ways to increase the performance of 3xsd:
        declarations. This can gain about 5%-6% performance increasement.
        2.Use PyPy.This can gain about 10%-15% performance increasement(or more).
 
-#OS requirement & install: 
+# OS requirement & install: 
 
 CentOS 6/7 with python 2.6/2.7, Debian 6/7. Python 2.7 recommended.
 
